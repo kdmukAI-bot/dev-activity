@@ -98,6 +98,21 @@ def _is_excluded_file(path: str) -> bool:
     return False
 
 
+def _path_in_excluded_dir(path: str) -> bool:
+    """True if any directory component of `path` is in `_SKIP_DIR_NAMES`.
+
+    Why: a project's own `.gitignore` may forget to list `.venv`, `node_modules`,
+    `build/`, etc. — so `git status --porcelain` will then report thousands of
+    machine-managed files as uncommitted work. We apply the same skip-list used
+    for repo discovery as a safety net so missing-gitignore entries don't
+    pollute the activity timeline.
+    """
+    norm = path.replace("\\", "/")
+    # Drop the basename — these names are matched against directory components.
+    segments = norm.split("/")[:-1]
+    return any(seg in _SKIP_DIR_NAMES for seg in segments)
+
+
 def discover_repos(scan_roots: Iterable[str]) -> list[Path]:
     """Recursively find directories containing .git/, stopping descent at each repo.
 
@@ -221,7 +236,7 @@ def parse_git_log(
             parts = line.split("\t")
             if len(parts) >= 3:
                 path = "\t".join(parts[2:])
-                if _is_excluded_file(path):
+                if _is_excluded_file(path) or _path_in_excluded_dir(path):
                     continue
                 ins = _parse_numstat_value(parts[0])
                 dele = _parse_numstat_value(parts[1])
@@ -348,7 +363,7 @@ def scan_uncommitted(
         day = mtime_dt.date().isoformat()
         mtime_iso = mtime_dt.isoformat()
 
-        if _is_excluded_file(path):
+        if _is_excluded_file(path) or _path_in_excluded_dir(path):
             continue
 
         is_untracked = xy.startswith("??")
