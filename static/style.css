@@ -49,6 +49,17 @@
 
 .pd-devact-cell:hover { stroke: rgba(255, 255, 255, 0.6); stroke-width: 1; cursor: pointer; }
 
+/* Outline marking the currently-selected day on the detail-page heatmap. The
+   <rect> is positioned by JS to wrap the active cell; pointer-events: none
+   keeps clicks falling through to the underlying cell so re-clicking stays
+   responsive. */
+.pd-devact-selected-outline {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.95);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
 /* Mini-heatmap squares in the widget (HTML, not SVG) */
 .pd-devact-mini-heatmap {
   display: flex;

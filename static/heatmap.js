@@ -7,6 +7,51 @@
 (function () {
   const TIER_RANK = { none: 0, low: 1, moderate: 2, high: 3 };
 
+  // Selection outline: position a single overlay <rect> over the day-cell
+  // whose data-day matches `day`. Stored as a dataset attr on the outline
+  // element so a heatmap re-render (htmx swap, refetch) can restore it.
+  function applySelection(cellsId, outlineId, day) {
+    const outline = document.getElementById(outlineId);
+    if (!outline) return;
+    const cellsG = document.getElementById(cellsId);
+    if (!cellsG || !day) {
+      outline.style.display = "none";
+      return;
+    }
+    const target = cellsG.querySelector(`[data-day="${day}"]`);
+    if (!target) {
+      outline.style.display = "none";
+      return;
+    }
+    let x, y, w, h;
+    if (target.tagName.toLowerCase() === "g") {
+      // Split cell: two half-rects. Span both.
+      const left = target.querySelector("rect");
+      const right = left.nextElementSibling;
+      x = parseFloat(left.getAttribute("x"));
+      y = parseFloat(left.getAttribute("y"));
+      h = parseFloat(left.getAttribute("height"));
+      w = parseFloat(left.getAttribute("width")) +
+          parseFloat(right.getAttribute("width"));
+    } else {
+      x = parseFloat(target.getAttribute("x"));
+      y = parseFloat(target.getAttribute("y"));
+      w = parseFloat(target.getAttribute("width"));
+      h = parseFloat(target.getAttribute("height"));
+    }
+    outline.setAttribute("x", x - 1);
+    outline.setAttribute("y", y - 1);
+    outline.setAttribute("width", w + 2);
+    outline.setAttribute("height", h + 2);
+    outline.style.display = "";
+  }
+
+  window.setHeatmapSelected = function (cellsId, outlineId, day) {
+    const outline = document.getElementById(outlineId);
+    if (outline) outline.dataset.day = day || "";
+    applySelection(cellsId, outlineId, day);
+  };
+
   function mkRect(x, y, w, h, cls, day, tooltip) {
     const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     rect.setAttribute("x", x);
@@ -144,6 +189,14 @@
             }
             if (day) onClickDay(day);
           });
+        }
+
+        // Restore selection outline if one was previously set (e.g. user
+        // clicked a day, then htmx re-rendered the widget and rebuilt cells).
+        if (opts.outlineId) {
+          const outline = document.getElementById(opts.outlineId);
+          const day = outline && outline.dataset.day;
+          if (day) applySelection(opts.cellsId, opts.outlineId, day);
         }
       })
       .catch((err) => console.error("heatmap fetch failed", err));

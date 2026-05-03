@@ -54,6 +54,8 @@
 
       <g id="pd-devact-cells"></g>
       <g id="pd-devact-month-labels"></g>
+      <rect id="pd-devact-selected-outline" class="pd-devact-selected-outline"
+            style="display:none" rx="2" ry="2"></rect>
     </svg>
   </div>
 
@@ -90,6 +92,9 @@
   function loadDay(day, opts) {
     const target = document.getElementById("pd-devact-day-detail");
     target.innerHTML = '<p class="pd-empty">Loading…</p>';
+    if (window.setHeatmapSelected) {
+      window.setHeatmapSelected("pd-devact-cells", "pd-devact-selected-outline", day);
+    }
     fetch(`/modules/dev-activity/day/${day}`)
       .then((r) => r.text())
       .then((html) => {
@@ -116,6 +121,7 @@
   const opts = {
     cellsId: "pd-devact-cells",
     monthsId: "pd-devact-month-labels",
+    outlineId: "pd-devact-selected-outline",
     sq: {{ sq }}, gap: {{ gap }}, cols: {{ cols }}, rows: {{ rows }},
     padLeft: {{ padding_left }}, padTop: {{ padding_top }},
     onClickDay: loadDay,
@@ -130,6 +136,11 @@
   const params = new URLSearchParams(window.location.search);
   const dayParam = params.get("day");
   if (dayParam && /^\d{4}-\d{2}-\d{2}$/.test(dayParam)) {
+    // Stash the selection so renderHeatmap can restore the outline once cells
+    // exist; loadDay also calls setHeatmapSelected, which will simply re-find
+    // the (possibly not-yet-rendered) target and no-op until then.
+    const outline = document.getElementById("pd-devact-selected-outline");
+    if (outline) outline.dataset.day = dayParam;
     loadDay(dayParam, { pushUrl: false });
   }
 })();
