@@ -1,0 +1,74 @@
+{# Widget: full year heatmap, right-anchored and clipped on the left to fit
+   the card. Day-of-week labels live in a separate SVG to the left of the
+   clipping container so they always stay visible; month labels live inside
+   the main SVG (and clip with the leftmost weeks — fine, the visible months
+   are still correctly labeled). #}
+{% set sq = 12 %}
+{% set gap = 2 %}
+{% set cols = 52 %}
+{% set rows = 7 %}
+{% set padding_left = 0 %}
+{% set padding_top = 16 %}
+{% set svg_w = padding_left + cols * (sq + gap) %}
+{% set svg_h = padding_top + rows * (sq + gap) %}
+{% set axis_w = 22 %}
+
+<div hx-get="/modules/dev-activity/widget"
+     hx-trigger="sse:dev-activity-update from:body"
+     hx-swap="outerHTML">
+  <h2><a href="/modules/dev-activity/">Dev Activity</a></h2>
+
+  <div class="pd-devact-widget-heatmap-row">
+    <svg class="pd-devact-widget-axis"
+         width="{{ axis_w }}" height="{{ svg_h }}"
+         viewBox="0 0 {{ axis_w }} {{ svg_h }}"
+         xmlns="http://www.w3.org/2000/svg">
+      {% for label_dow, label in [(1, 'Mon'), (3, 'Wed'), (5, 'Fri')] %}
+        <text x="0" y="{{ padding_top + label_dow * (sq + gap) + sq - 2 }}"
+              class="pd-devact-axis">{{ label }}</text>
+      {% endfor %}
+    </svg>
+    <div class="pd-devact-widget-heatmap-wrap">
+      <svg class="pd-devact-heatmap"
+           viewBox="0 0 {{ svg_w }} {{ svg_h }}"
+           width="{{ svg_w }}" height="{{ svg_h }}"
+           xmlns="http://www.w3.org/2000/svg">
+        <g id="pd-devact-widget-cells"></g>
+        <g id="pd-devact-widget-month-labels"></g>
+      </svg>
+    </div>
+  </div>
+
+  {% if data.detail_text %}
+  <p class="pd-devact-warn">{{ data.detail_text }}</p>
+  {% endif %}
+
+  {% if data.last_scan_at %}
+  <footer class="pd-devact-footer">
+    last scan
+    <time datetime="{{ data.last_scan_at }}" title="{{ data.last_scan_at }}">{{ data.last_scan_at | time_ago }}</time>
+  </footer>
+  {% endif %}
+</div>
+
+<script src="/static/dev-activity/heatmap.js?v={{ data.occurred_at | replace(':', '') | replace('.', '') if data.occurred_at else '0' }}"></script>
+<script>
+(function () {
+  const opts = {
+    cellsId: "pd-devact-widget-cells",
+    monthsId: "pd-devact-widget-month-labels",
+    sq: {{ sq }}, gap: {{ gap }}, cols: {{ cols }}, rows: {{ rows }},
+    padLeft: {{ padding_left }}, padTop: {{ padding_top }},
+    onClickDay: function (day) {
+      window.location.href = "/modules/dev-activity/?day=" + encodeURIComponent(day);
+    },
+  };
+  // On htmx swap, the external heatmap.js script tag may still be loading
+  // when this inline script runs. Poll briefly until renderHeatmap is defined.
+  function go() {
+    if (window.renderHeatmap) window.renderHeatmap(opts);
+    else setTimeout(go, 30);
+  }
+  go();
+})();
+</script>

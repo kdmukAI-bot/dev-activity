@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Dev Activity · Personal Dashboard{% endblock %}
+{% block content %}
+<section class="pd-page pd-devact-page">
+  <h2>Dev Activity</h2>
+
+  {% if data.detail_text %}
+    <p class="pd-devact-warn">{{ data.detail_text }}</p>
+  {% endif %}
+
+  {# 52 cols x 7 rows = ~last year of days. Render via SVG so we can hover & click. #}
+  {# Compute the heatmap layout in Jinja: oldest column on the left.
+     Build week buckets keyed by (col, dow). Days come from data.year_grid (a dict day -> {category: row}). #}
+
+  {% set tier_levels = {'none': 0, 'low': 1, 'moderate': 2, 'high': 3} %}
+
+  {# Width math: 12px squares, 2px gap. 52 cols -> 52*14 = 728. #}
+  {% set sq = 12 %}
+  {% set gap = 2 %}
+  {% set cols = 52 %}
+  {% set rows = 7 %}
+  {% set padding_left = 36 %}
+  {% set padding_top = 24 %}
+  {% set svg_w = padding_left + cols * (sq + gap) %}
+  {% set svg_h = padding_top + rows * (sq + gap) %}
+
+  {% set days = data.year_grid %}
+
+  <div class="pd-devact-heatmap-wrap">
+    <svg class="pd-devact-heatmap"
+         viewBox="0 0 {{ svg_w }} {{ svg_h }}"
+         width="{{ svg_w }}" height="{{ svg_h }}"
+         xmlns="http://www.w3.org/2000/svg">
+      {# Day-of-week labels on the left. Sun=0, Mon=1, ... Sat=6 (we'll show Mon/Wed/Fri). #}
+      {% for label_dow, label in [(1, 'Mon'), (3, 'Wed'), (5, 'Fri')] %}
+        <text x="0" y="{{ padding_top + label_dow * (sq + gap) + sq - 2 }}"
+              class="pd-devact-axis">{{ label }}</text>
+      {% endfor %}
+
+      {% set today = data.today %}
+      {# Compute range of days: today - 364 .. today. Walk in date order. #}
+      {% set total_days = cols * rows %}
+      {# We'll inline-render <rect> per day. For simplicity, compute days client-side too. #}
+
+      {% set col_ns = namespace(month_labels=[]) %}
+
+      {# Render via macro emulation: walk days_list passed from server-rendered context if available;
+         otherwise rely on a JS call for /heatmap.json. Since templates can't easily do date math,
+         we emit just the days in data.year_grid, packing them column-by-column from the leftmost
+         Sunday >= cutoff. #}
+
+      {# To keep this template independent of complex jinja date math, we render via JS using
+         /modules/dev-activity/heatmap.json. The SVG is just a placeholder grid the JS fills in. #}
+
+      <g id="pd-devact-cells"></g>
+      <g id="pd-devact-month-labels"></g>
+    </svg>
+  </div>
+
+  <div class="pd-devact-legend">
+    <span>Less</span>
+    <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ss-none"></span>
+    <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ss-low"></span>
+    <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ss-moderate"></span>
+    <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ss-high"></span>
+    <span>SeedSigner</span>
+    <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ot-low"></span>
+    <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ot-moderate"></span>
+    <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ot-high"></span>
+    <span>Other</span>
+    <span>More</span>
+  </div>
+
+  <div id="pd-devact-day-detail" class="pd-devact-day-detail">
+    <p class="pd-empty">Click a day to see its breakdown.</p>
+  </div>
+
+  {% if data.last_scan_at %}
+  <p class="pd-devact-footer">
+    Last scan
+    <time datetime="{{ data.last_scan_at }}" title="{{ data.last_scan_at }}">{{ data.last_scan_at | time_ago }}</time>.
+  </p>
+  {% endif %}
+
+</section>
+
+<script src="/static/dev-activity/heatmap.js?v={{ data.occurred_at | replace(':', '') | replace('.', '') if data.occurred_at else '0' }}"></script>
+<script>
+(function () {
+  function loadDay(day, opts) {
+    const target = document.getElementById("pd-devact-day-detail");
+    target.innerHTML = '<p class="pd-empty">Loading…</p>';
+    fetch(`/modules/dev-activity/day/${day}`)
+      .then((r) => r.text())
+      .then((html) => {
+        target.innerHTML = html;
+        // Reflect the active day in the URL so a refresh keeps it loaded.
+        // Skip the pushState when called from initial-load (popstate would
+        // otherwise stack history entries on every page open).
+        if (!opts || opts.pushUrl !== false) {
+          const url = new URL(window.location);
+          url.searchParams.set("day", day);
+          history.pushState({ day }, "", url);
+        }
+      })
+      .catch((err) => { target.innerHTML = `<p class="pd-empty">Failed to load: ${err}</p>`; });
+  }
+
+  // Browser back/forward should reload the day from the URL.
+  window.addEventListener("popstate", function () {
+    const params = new URLSearchParams(window.location.search);
+    const d = params.get("day");
+    if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) loadDay(d, { pushUrl: false });
+  });
+
+  const opts = {
+    cellsId: "pd-devact-cells",
+    monthsId: "pd-devact-month-labels",
+    sq: {{ sq }}, gap: {{ gap }}, cols: {{ cols }}, rows: {{ rows }},
+    padLeft: {{ padding_left }}, padTop: {{ padding_top }},
+    onClickDay: loadDay,
+  };
+  function go() {
+    if (window.renderHeatmap) window.renderHeatmap(opts);
+    else setTimeout(go, 30);
+  }
+  go();
+
+  // Deep link: /modules/dev-activity/?day=YYYY-MM-DD pre-loads that day.
+  const params = new URLSearchParams(window.location.search);
+  const dayParam = params.get("day");
+  if (dayParam && /^\d{4}-\d{2}-\d{2}$/.test(dayParam)) {
+    loadDay(dayParam, { pushUrl: false });
+  }
+})();
+</script>
+{% endblock %}

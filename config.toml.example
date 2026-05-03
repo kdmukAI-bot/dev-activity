@@ -1,0 +1,64 @@
+enabled = true
+notification_policy = "never"
+
+# Where to look for local git working trees (top-level .git only; no deep recursion).
+scan_roots = ["/home/kdmukai/dev"]
+
+# Author identities to credit for local-tree commits. Substring-matched against
+# git author name/email (so "kdmukAI-bot" or your personal email both work).
+git_author_substrings = [
+  "kdmukAI-bot",
+  "kdmukai",
+]
+
+# GitHub login(s) to credit for project-lens reviews/comments AND for filtering
+# commits in personal-fork bare clones.
+github_logins = ["kdmukai"]
+
+# Repo basenames classified as SeedSigner work. Anything else is "other".
+seedsigner_repos = [
+  "seedsigner",
+  "seedsigner-c-modules",
+  "seedsigner-micropython-builder",
+  "seedsigner-raspi-lvgl",
+  "esp-board-common",
+  "esp-camera-pipeline",
+  "project-lens",
+  "project-lens-seedsigner-config",
+  "project-pm",
+]
+
+# Path to the project-lens SQLite DB (opened read-only).
+lens_db_path = "/home/kdmukai/dev/tools/project-lens-seedsigner-config/var/project-lens.db"
+
+# Raw Telegram message activity. project-lens keeps the raw message store in
+# a separate SQLite from the main lens DB. Counts messages from the
+# configured user_ids per day; all credited to the SeedSigner category.
+telegram_db_path = "/home/kdmukai/dev/tools/project-lens-seedsigner-config/var/telegram.db"
+# To find your user_id:
+#   sqlite3 <telegram_db_path> "SELECT from_user, from_user_id, COUNT(*) FROM telegram_msgs GROUP BY from_user_id ORDER BY 3 DESC LIMIT 5"
+telegram_user_ids = []   # e.g. [1724866645]
+
+# Personal GitHub forks (owner/repo). Bare-cloned and fetched nightly into
+# `forks_cache_dir`. Forks that don't exist on GitHub are logged and skipped.
+personal_forks = [
+  "kdmukai/seedsigner",
+  "kdmukai/seedsigner-c-modules",
+  "kdmukai/seedsigner-micropython-builder",
+  "kdmukai/seedsigner-raspi-lvgl",
+]
+
+# Cache for bare clones of personal forks.
+forks_cache_dir = "~/.cache/personal-dashboard/dev-activity/forks"
+
+# Per-dimension tiering: until each (category, dimension) has at least this many
+# non-zero days, the heatmap falls back to binary shading (any activity = "low").
+tiering_min_nonzero_days = 14
+
+# Dashboard refreshes its in-memory cache from the SQLite DB on this cadence.
+# Scanning itself is done by the cron job below, NOT here.
+# NOTE: This `[schedule]` table MUST be at the bottom of the file, since TOML
+# scopes top-level scalars/arrays to the most recent table header.
+[schedule]
+type = "interval"
+seconds = 300
