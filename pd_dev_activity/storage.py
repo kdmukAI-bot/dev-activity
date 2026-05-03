@@ -113,7 +113,10 @@ CREATE TABLE IF NOT EXISTS meta (
 
 
 # Tier ordering, lowest to highest. The overall daily tier is max(per-dim tiers).
-TIER_ORDER = ("none", "low", "moderate", "high")
+# 'trace' sits below 'low' for sub-low signals (currently telegram chatter): it
+# registers presence on the heatmap without competing visually with real
+# code-work days.
+TIER_ORDER = ("none", "trace", "low", "moderate", "high")
 TIER_RANK = {t: i for i, t in enumerate(TIER_ORDER)}
 
 
@@ -130,20 +133,20 @@ DIMENSION_DISCOUNTS: dict[str, int] = {
     # Empty by default. Keys are dimension column names (e.g. "n_lens_events");
     # values are tier levels to subtract after natural banding. Telegram used
     # to live here (-1) but now uses its own custom banding (see
-    # _band_assigner_telegram) that natively caps at "moderate" and applies
-    # a noise floor — no discount needed.
+    # _band_assigner_telegram) — a 3-tier tertile split that maps to
+    # 'trace' / 'low' / 'moderate' and natively caps at 'moderate', so a
+    # post-hoc discount isn't needed.
 }
 
 
 # Telegram messages get their own statistical banding instead of the generic
-# std-dev one. Three tiers (none / low / moderate; no "high"). Above the
-# noise floor, days split at the median into low (≤ median) and moderate
-# (> median). Telegram is never strong enough to dominate as "high".
+# std-dev one. Three tiers above zero (trace / low / moderate; no "high"),
+# split at tertiles of the non-zero distribution. Telegram is never strong
+# enough to dominate as "high".
 #
-# Noise floor: messages ≤ this many → 'none'. Currently 0 (any single
-# message registers as 'low') — bump up if pure-chatter days start cluttering
-# the heatmap.
-TELEGRAM_NOISE_FLOOR = 0
+# We deliberately keep no noise floor — a single message still registers, but
+# lands in 'trace' (a sub-low band rendered as a barely-visible tint) so
+# pure-chatter days don't read as real activity on the heatmap.
 
 
 def _apply_discount(tier: str, dim: str) -> str:
@@ -402,25 +405,34 @@ def _band_assigner(values: Iterable[int], min_nonzero_days: int):
 def _band_assigner_telegram(values: Iterable[int]):
     """Custom 3-tier banding for telegram message counts.
 
-    - Values ≤ TELEGRAM_NOISE_FLOOR  → 'none' (drops one-liner replies).
-    - Above the floor: median split  → 'low' (≤ median) / 'moderate' (> median).
+    - 0 messages → 'none'.
+    - Above 0: tertile split → 'trace' (≤ p33) / 'low' (≤ p67) / 'moderate' (> p67).
     - Never produces 'high' — telegram is a low-quality signal that should
       never dominate the day's overall tier under max-wins composition.
+
+    With no noise floor, a single-message day still counts — but lands in
+    'trace' rather than 'low', so pure-chatter days stay barely visible on
+    the heatmap without overstating activity.
     """
-    above_floor = sorted(v for v in values if v and v > TELEGRAM_NOISE_FLOOR)
-    if len(above_floor) < 3:
+    nonzero = sorted(v for v in values if v and v > 0)
+    if len(nonzero) < 3:
         def assign(value: int) -> str:
-            if value <= TELEGRAM_NOISE_FLOOR:
+            if value <= 0:
                 return "none"
-            return "low"
+            return "trace"
         return assign
 
-    median = statistics.median(above_floor)
+    p33_idx = max(0, int(len(nonzero) * 1 / 3) - 1)
+    p67_idx = max(0, int(len(nonzero) * 2 / 3) - 1)
+    p33 = nonzero[p33_idx]
+    p67 = nonzero[p67_idx]
 
     def assign(value: int) -> str:
-        if value <= TELEGRAM_NOISE_FLOOR:
+        if value <= 0:
             return "none"
-        if value <= median:
+        if value <= p33:
+            return "trace"
+        if value <= p67:
             return "low"
         return "moderate"
 

@@ -12,7 +12,7 @@
   {# Compute the heatmap layout in Jinja: oldest column on the left.
      Build week buckets keyed by (col, dow). Days come from data.year_grid (a dict day -> {category: row}). #}
 
-  {% set tier_levels = {'none': 0, 'low': 1, 'moderate': 2, 'high': 3} %}
+  {% set tier_levels = {'none': 0, 'trace': 1, 'low': 2, 'moderate': 3, 'high': 4} %}
 
   {# Width math: 12px squares, 2px gap. 52 cols -> 52*14 = 728. #}
   {% set sq = 12 %}
@@ -62,10 +62,12 @@
   <div class="pd-devact-legend">
     <span>Less</span>
     <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ss-none"></span>
+    <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ss-trace"></span>
     <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ss-low"></span>
     <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ss-moderate"></span>
     <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ss-high"></span>
     <span>SeedSigner</span>
+    <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ot-trace"></span>
     <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ot-low"></span>
     <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ot-moderate"></span>
     <span class="pd-devact-cell pd-devact-cell-legend pd-devact-ot-high"></span>

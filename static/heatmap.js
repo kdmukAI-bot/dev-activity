@@ -5,7 +5,7 @@
 // the target groups before rendering, so htmx swaps that re-fire it work.
 
 (function () {
-  const TIER_RANK = { none: 0, low: 1, moderate: 2, high: 3 };
+  const TIER_RANK = { none: 0, trace: 1, low: 2, moderate: 3, high: 4 };
 
   // Selection outline: position a single overlay <rect> over the day-cell
   // whose data-day matches `day`. Stored as a dataset attr on the outline

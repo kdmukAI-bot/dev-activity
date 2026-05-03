@@ -9,9 +9,16 @@
   /* Orange ramp anchored on the SeedSigner *logo* orange #FF7300, sampled
      from src/seedsigner/resources/img/logo_black_240.png. (The GUI's
      ACCENT_COLOR #FF9F0A is yellower than the brand mark.) */
+  /* 'trace' is a sub-low band for low-quality signals (telegram chatter).
+     Targeted as a smooth halfway-ish step between the empty gray and 'low':
+     same approximate luminance as empty, but with a faint warm/cool tint so
+     the cell reads as "barely something" rather than a saturated brown jump
+     out of the neutral background. */
+  --pd-devact-ss-trace:     #432f26;
   --pd-devact-ss-low:       #5a3220;
   --pd-devact-ss-moderate:  #a04500;
   --pd-devact-ss-high:      #ff7300;
+  --pd-devact-ot-trace:     #2d4242;
   --pd-devact-ot-low:       #2d5757;
   --pd-devact-ot-moderate:  #0e7d7d;
   --pd-devact-ot-high:      #00cccc;
@@ -27,11 +34,13 @@
 }
 
 /* SeedSigner shades (orange) */
+.pd-devact-ss-trace    { fill: var(--pd-devact-ss-trace); }
 .pd-devact-ss-low      { fill: var(--pd-devact-ss-low); }
 .pd-devact-ss-moderate { fill: var(--pd-devact-ss-moderate); }
 .pd-devact-ss-high     { fill: var(--pd-devact-ss-high); }
 
 /* Other shades (teal) */
+.pd-devact-ot-trace    { fill: var(--pd-devact-ot-trace); }
 .pd-devact-ot-low      { fill: var(--pd-devact-ot-low); }
 .pd-devact-ot-moderate { fill: var(--pd-devact-ot-moderate); }
 .pd-devact-ot-high     { fill: var(--pd-devact-ot-high); }
@@ -40,9 +49,11 @@
    on top of pd-devact-ss-X / pd-devact-ot-X so the SS class wins for the left
    half and the OT class wins for the right half. The selectors below pin the
    correct color for each half based on the dominant class. */
+.pd-devact-cell-half-l.pd-devact-ss-trace    { fill: var(--pd-devact-ss-trace); }
 .pd-devact-cell-half-l.pd-devact-ss-low      { fill: var(--pd-devact-ss-low); }
 .pd-devact-cell-half-l.pd-devact-ss-moderate { fill: var(--pd-devact-ss-moderate); }
 .pd-devact-cell-half-l.pd-devact-ss-high     { fill: var(--pd-devact-ss-high); }
+.pd-devact-cell-half-r.pd-devact-ot-trace    { fill: var(--pd-devact-ot-trace); }
 .pd-devact-cell-half-r.pd-devact-ot-low      { fill: var(--pd-devact-ot-low); }
 .pd-devact-cell-half-r.pd-devact-ot-moderate { fill: var(--pd-devact-ot-moderate); }
 .pd-devact-cell-half-r.pd-devact-ot-high     { fill: var(--pd-devact-ot-high); }
@@ -121,9 +132,11 @@
   margin: 0 1px;
 }
 .pd-devact-cell-legend.pd-devact-ss-none      { background: var(--pd-devact-empty); }
+.pd-devact-cell-legend.pd-devact-ss-trace     { background: var(--pd-devact-ss-trace); }
 .pd-devact-cell-legend.pd-devact-ss-low       { background: var(--pd-devact-ss-low); }
 .pd-devact-cell-legend.pd-devact-ss-moderate  { background: var(--pd-devact-ss-moderate); }
 .pd-devact-cell-legend.pd-devact-ss-high      { background: var(--pd-devact-ss-high); }
+.pd-devact-cell-legend.pd-devact-ot-trace     { background: var(--pd-devact-ot-trace); }
 .pd-devact-cell-legend.pd-devact-ot-low       { background: var(--pd-devact-ot-low); }
 .pd-devact-cell-legend.pd-devact-ot-moderate  { background: var(--pd-devact-ot-moderate); }
 .pd-devact-cell-legend.pd-devact-ot-high      { background: var(--pd-devact-ot-high); }
