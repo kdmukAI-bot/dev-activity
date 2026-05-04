@@ -29,11 +29,13 @@ the bot. The split is:
 | **D4 uncommitted files** | Distinct file paths from `git status --porcelain` (per-day snapshot, rebuilt each scan to avoid double-counting committed work). | Standard 4-band. |
 | **D5 uncommitted LoC effort** | Per-file `max(insertions, deletions)` from `git diff HEAD --numstat`; full file line count for untracked files. | Standard 4-band. |
 | **D6 lens review** | Inline review comments (`pr_review_comment`) from project-lens — line-by-line PR feedback you wrote. | Standard 4-band. |
-| **D7 lens discussion** | PR conversation comments + issue comments from project-lens — substantive engagement. | 2-band median split — substantive PR/issue engagement is always at least `moderate`. |
-| **D8 telegram messages** | Per-day count of your messages in the SeedSigner devs Telegram group (from a separate SQLite DB). All credited to the SeedSigner category. | 3-band median split with configurable noise floor — never produces `high`; tops out at `moderate` so chatter can't dominate. |
+| **D7 lens discussion** | PR/issue creation by you + PR conversation comments + issue comments from project-lens — substantive engagement, including the act of opening a PR or issue. | 2-band median split — substantive PR/issue engagement is always at least `moderate`. |
+| **D8 telegram messages** | Per-day count of your messages in the SeedSigner devs Telegram group (from a separate SQLite DB). All credited to the SeedSigner category. | 3-band tertile split (`trace` / `low` / `moderate`) with no noise floor — single-message days land in the sub-low `trace` band so pure chatter doesn't read as real activity, and the band caps at `moderate` so chatter can't dominate. |
 
-The day's overall tier is the **max** across all nine dimensions (none < low <
-moderate < high). A high in any one dimension makes the day high.
+The day's overall tier is the **max** across all nine dimensions (none < trace
+< low < moderate < high). A high in any one dimension makes the day high.
+`trace` is a sub-low band only emitted by D8 telegram, so it's effectively
+"chatter without code work."
 
 ## Custom file/data filtering
 
@@ -52,9 +54,9 @@ that net to 0 lines. They show up in `git status` but represent no actual work.
 After natural banding, `DIMENSION_DISCOUNTS` (`storage.py`) can subtract levels
 from a dimension's tier before the max-wins composition. Currently empty:
 telegram used to be discounted -1 here but moved to its own custom bander
-(which natively caps at `moderate`); a fork-day commit boost was tried then
-removed once D1 was split into per-author dimensions (D1a is already 2-band
-Q3, so an explicit boost would be redundant).
+(which natively caps at `moderate` and emits `trace` below `low`); a fork-day
+commit boost was tried then removed once D1 was split into per-author
+dimensions (D1a is already 2-band Q3, so an explicit boost would be redundant).
 
 The mechanism remains in code and can be re-enabled or extended for new
 dimensions as needed.

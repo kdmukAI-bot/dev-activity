@@ -633,8 +633,10 @@ def recompute_daily_tiers(conn: sqlite3.Connection, min_nonzero_days: int) -> No
     #     often volume-heavy on contentious PRs). The user doesn't use
     #     GitHub's "Submit Review" feature, so pr_review events are not
     #     emitted by the scanner.
-    #   - lens_discussion: pr_comment + issue_comment (substantive engagement
-    #     on PR conversation threads and issues).
+    #   - lens_discussion: pr_comment + issue_comment + pr_open + issue_open
+    #     (substantive engagement on PR conversation threads and issues,
+    #     plus the act of opening one in the first place — at least as
+    #     deliberate as commenting).
     cur = conn.execute(
         """
         SELECT le.day AS day,
@@ -643,7 +645,10 @@ def recompute_daily_tiers(conn: sqlite3.Connection, min_nonzero_days: int) -> No
                  ELSE 'other'
                END AS category,
                SUM(CASE WHEN kind = 'pr_review_comment' THEN 1 ELSE 0 END) AS n_review,
-               SUM(CASE WHEN kind IN ('pr_comment','issue_comment') THEN 1 ELSE 0 END) AS n_discussion
+               SUM(CASE
+                     WHEN kind IN ('pr_comment','issue_comment','pr_open','issue_open')
+                     THEN 1 ELSE 0
+                   END) AS n_discussion
         FROM lens_events le
         GROUP BY le.day, category
         """

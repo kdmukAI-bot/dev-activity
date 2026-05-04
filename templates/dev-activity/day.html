@@ -62,6 +62,12 @@
             {{ e.repo }}#{{ e.number }}
             (
             {%- set parts = [] -%}
+            {%- if e.n_pr_opens -%}
+              {%- set _ = parts.append('opened PR') -%}
+            {%- endif -%}
+            {%- if e.n_issue_opens -%}
+              {%- set _ = parts.append('opened issue') -%}
+            {%- endif -%}
             {%- if e.n_review_comments -%}
               {%- set _ = parts.append(e.n_review_comments ~ ' inline review comment' ~ ('' if e.n_review_comments == 1 else 's')) -%}
             {%- endif -%}

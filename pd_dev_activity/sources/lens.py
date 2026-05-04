@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import storage
@@ -28,6 +28,12 @@ def _parse_iso_to_local_day(iso_ts: str | None) -> tuple[str, str] | None:
         dt = datetime.fromisoformat(iso_ts)
     except ValueError:
         return None
+    if dt.tzinfo is None:
+        # sqlite-stored datetime columns (created_at_gh) come back naive but
+        # represent UTC per GitHub's API contract. Comment JSON timestamps
+        # already carry an explicit `Z`, so this branch only fires for the
+        # native datetime columns.
+        dt = dt.replace(tzinfo=timezone.utc)
     local_dt = dt.astimezone()
     return local_dt.date().isoformat(), local_dt.isoformat()
 
@@ -95,21 +101,36 @@ def scan_lens_db(
         # auto-generated empty wrapper around an inline comment (the user
         # never uses GitHub's "Submit Review" feature). They were double-
         # counting the same activity already captured by pr_review_comment.
+        # The allowlist is the canonical set of kinds the scanner emits;
+        # rows with any other kind get wiped so legacy/typoed data can't
+        # silently linger.
         conn.execute(
             "DELETE FROM lens_events WHERE kind NOT IN "
-            "('pr_review_comment', 'pr_comment', 'issue_comment')"
+            "('pr_review_comment', 'pr_comment', 'issue_comment', "
+            "'pr_open', 'issue_open')"
         )
 
-        # PRs: review_comments / issue_comments. We deliberately skip
-        # reviews_json — see cleanup comment above.
+        # PRs: open events (when authored by user) + review_comments +
+        # issue_comments. We deliberately skip reviews_json — see cleanup
+        # comment above.
         cur = src.execute(
-            "SELECT repo, number, title, review_comments_json, "
-            "issue_comments_json FROM github_prs"
+            "SELECT repo, number, title, author, created_at_gh, "
+            "review_comments_json, issue_comments_json FROM github_prs"
         )
         for row in cur:
             repo = row["repo"]
             number = int(row["number"])
             title = row["title"]
+
+            # PR creation by the user counts as substantive engagement —
+            # opening a PR is at least as deliberate as commenting on one.
+            if (row["author"] or "").lower() in logins_lower:
+                _emit_event(
+                    conn, kind="pr_open", repo=repo, number=number,
+                    title=title, actor_login=row["author"] or "",
+                    ts_iso=row["created_at_gh"],
+                )
+                emitted += 1
 
             for comment in _iter_blob(row["review_comments_json"]):
                 user = (comment or {}).get("user") or {}
@@ -139,14 +160,23 @@ def scan_lens_db(
                 )
                 emitted += 1
 
-        # Issues: comments
+        # Issues: open events (when authored by user) + comments
         cur = src.execute(
-            "SELECT repo, number, title, comments_json FROM github_issues"
+            "SELECT repo, number, title, author, created_at_gh, "
+            "comments_json FROM github_issues"
         )
         for row in cur:
             repo = row["repo"]
             number = int(row["number"])
             title = row["title"]
+
+            if (row["author"] or "").lower() in logins_lower:
+                _emit_event(
+                    conn, kind="issue_open", repo=repo, number=number,
+                    title=title, actor_login=row["author"] or "",
+                    ts_iso=row["created_at_gh"],
+                )
+                emitted += 1
 
             for comment in _iter_blob(row["comments_json"]):
                 user = (comment or {}).get("user") or {}

@@ -258,6 +258,10 @@ class Analyzer:
                                AS n_pr_comments,
                            SUM(CASE WHEN kind='issue_comment' THEN 1 ELSE 0 END)
                                AS n_issue_comments,
+                           SUM(CASE WHEN kind='pr_open' THEN 1 ELSE 0 END)
+                               AS n_pr_opens,
+                           SUM(CASE WHEN kind='issue_open' THEN 1 ELSE 0 END)
+                               AS n_issue_opens,
                            MAX(ts_iso) AS latest_ts
                     FROM lens_events
                     WHERE day = ?
