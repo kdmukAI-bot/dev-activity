@@ -1,6 +1,12 @@
 {# Per-day breakdown fragment, swapped in by htmx click on the heatmap. #}
 {% set d = data %}
 
+{% macro tier_label(prefix, tier) -%}
+{%- if tier and tier != 'none' -%}
+<span class="pd-devact-tier-label"><span class="pd-devact-cell-legend pd-devact-{{ prefix }}-{{ tier }}"></span>{{ tier }}</span>
+{%- endif -%}
+{%- endmacro %}
+
 <div class="pd-devact-day">
   <div class="pd-devact-day-header">
     {% set ss_t = d.ss_tier or 'none' %}
@@ -33,7 +39,7 @@
   {% if d.commits %}
     {% set fresh_commits = d.commits | selectattr('active_on_commit_day', 'equalto', 1) | list %}
     {% set older_commits = d.commits | selectattr('active_on_commit_day', 'equalto', 0) | list %}
-    <h4>Commits ({{ fresh_commits | length }}{% if older_commits %}, {{ older_commits | length }} older work{% endif %})</h4>
+    <h4>Commits ({{ fresh_commits | length }}{% if older_commits %}, {{ older_commits | length }} older work{% endif %}) {{ tier_label('ss', d.section_tiers.commits.seedsigner) }} {{ tier_label('ot', d.section_tiers.commits.other) }}</h4>
     <ul class="pd-devact-day-list">
       {% for c in d.commits %}
         <li class="pd-devact-day-item pd-devact-cat-{{ c.category }}">
@@ -54,7 +60,7 @@
     {% for f in d.file_touches %}
       {% set _ = ns.by_project.setdefault(f.project_name, []).append(f) %}
     {% endfor %}
-    <h4>Uncommitted touches ({{ d.file_touches | length }} files)</h4>
+    <h4>Uncommitted touches ({{ d.file_touches | length }} files) {{ tier_label('ss', d.section_tiers.uncommitted.seedsigner) }} {{ tier_label('ot', d.section_tiers.uncommitted.other) }}</h4>
     <ul class="pd-devact-day-list">
       {% for project, files in ns.by_project.items() %}
         <li class="pd-devact-cat-{{ files[0].category }}">
@@ -76,7 +82,7 @@
 
   {% if d.lens_events %}
     {% set total_events = d.lens_events | sum(attribute='total_events') %}
-    <h4>Lens activity ({{ total_events }} event{{ '' if total_events == 1 else 's' }} across {{ d.lens_events | length }} item{{ '' if d.lens_events | length == 1 else 's' }})</h4>
+    <h4>Lens activity ({{ total_events }} event{{ '' if total_events == 1 else 's' }} across {{ d.lens_events | length }} item{{ '' if d.lens_events | length == 1 else 's' }}) {{ tier_label('ss', d.section_tiers.lens.seedsigner) }} {{ tier_label('ot', d.section_tiers.lens.other) }}</h4>
     <ul class="pd-devact-day-list">
       {% for e in d.lens_events %}
         {% set lens_category = 'seedsigner' if e.repo.startswith('SeedSigner/') else 'other' %}
@@ -112,7 +118,7 @@
   {% endif %}
 
   {% if d.telegram_msgs %}
-    <h4>Telegram messages</h4>
+    <h4>Telegram messages {{ tier_label('ss', d.section_tiers.telegram.seedsigner) }}</h4>
     <p class="pd-devact-cat-seedsigner">
       <span class="pd-devact-day-project">SeedSigner devs group</span>:
       {{ d.telegram_msgs }} message{{ '' if d.telegram_msgs == 1 else 's' }}

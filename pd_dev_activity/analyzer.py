@@ -53,6 +53,19 @@ def _seedsigner_share(ss_tier: str, ot_tier: str) -> float:
     return rs / (rs + ro)
 
 
+def _max_tier(*tiers: str | None) -> str:
+    # Pick the highest tier among args using TIER_RANK; ignore None / unknown.
+    best = "none"
+    best_rank = TIER_RANK.get(best, 0)
+    for t in tiers:
+        if not t:
+            continue
+        r = TIER_RANK.get(t, 0)
+        if r > best_rank:
+            best, best_rank = t, r
+    return best
+
+
 def _enrich_with_share(rows: list[dict]) -> None:
     """In place: stamp `seedsigner_share` on both rows of any split day."""
     by_day: dict[str, dict[str, dict]] = {}
@@ -257,7 +270,8 @@ class Analyzer:
                      AND o.message = r.message
                      AND o.author_name = r.author_name
                     WHERE r.rn = 1
-                    ORDER BY r.category, r.project_name, r.author_iso DESC
+                    ORDER BY CASE r.category WHEN 'seedsigner' THEN 0 ELSE 1 END,
+                             r.project_name, r.author_iso DESC
                     """,
                     (day,),
                 )
@@ -271,7 +285,8 @@ class Analyzer:
                     FROM file_touches ft
                     JOIN projects p ON p.id = ft.project_id
                     WHERE ft.day = ?
-                    ORDER BY p.category, p.name, ft.file_path
+                    ORDER BY CASE p.category WHEN 'seedsigner' THEN 0 ELSE 1 END,
+                             p.name, ft.file_path
                     """,
                     (day,),
                 )
@@ -307,16 +322,49 @@ class Analyzer:
             ).fetchone()
             telegram_msgs = int(telegram_total["n"]) if telegram_total else 0
 
+            # Per-section tiers per category. The day-detail template renders
+            # these next to each section heading (commits, uncommitted touches,
+            # lens activity, telegram). Each section uses the max-rank across
+            # the dimensions that contribute to it, so a section's label
+            # reflects however that section's loudest signal landed in banding.
             ss_tier = "none"
             ot_tier = "none"
+            section_tiers = {
+                "commits":     {"seedsigner": "none", "other": "none"},
+                "uncommitted": {"seedsigner": "none", "other": "none"},
+                "lens":        {"seedsigner": "none", "other": "none"},
+                "telegram":    {"seedsigner": "none"},
+            }
             for r in conn.execute(
-                "SELECT category, overall_tier FROM daily_tiers WHERE day = ?",
+                """
+                SELECT category, overall_tier,
+                       tier_commits_personal, tier_commits_bot,
+                       tier_committed_files, tier_committed_loc_effort,
+                       tier_uncommitted_files, tier_uncommitted_loc_effort,
+                       tier_lens_review, tier_lens_discussion, tier_telegram_msgs
+                FROM daily_tiers WHERE day = ?
+                """,
                 (day,),
             ):
-                if r["category"] == "seedsigner":
+                cat = r["category"]
+                if cat == "seedsigner":
                     ss_tier = r["overall_tier"]
-                elif r["category"] == "other":
+                elif cat == "other":
                     ot_tier = r["overall_tier"]
+                else:
+                    continue
+                section_tiers["commits"][cat] = _max_tier(
+                    r["tier_commits_personal"], r["tier_commits_bot"],
+                    r["tier_committed_files"], r["tier_committed_loc_effort"],
+                )
+                section_tiers["uncommitted"][cat] = _max_tier(
+                    r["tier_uncommitted_files"], r["tier_uncommitted_loc_effort"],
+                )
+                section_tiers["lens"][cat] = _max_tier(
+                    r["tier_lens_review"], r["tier_lens_discussion"],
+                )
+                if cat == "seedsigner":
+                    section_tiers["telegram"]["seedsigner"] = r["tier_telegram_msgs"] or "none"
             seedsigner_share = _seedsigner_share(ss_tier, ot_tier)
             return {
                 "day": day,
@@ -327,6 +375,7 @@ class Analyzer:
                 "ss_tier": ss_tier,
                 "ot_tier": ot_tier,
                 "seedsigner_share": seedsigner_share,
+                "section_tiers": section_tiers,
             }
 
     def _read_year_for_json(self) -> list[dict]:

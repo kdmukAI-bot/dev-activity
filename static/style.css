@@ -257,6 +257,28 @@
 }
 .pd-devact-day-header h3 { margin: 0; }
 .pd-devact-day-blowup { flex-shrink: 0; display: block; }
+
+/* Inline tier rating displayed next to a section heading: a small color
+   swatch + the tier name (e.g. "low" with an orange square). Sits in the
+   same line as the h4 text; for sections that span both categories
+   (commits, uncommitted, lens), two labels render side by side. */
+.pd-devact-tier-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  margin-left: 0.5em;
+  font-size: 0.78em;
+  font-weight: normal;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+  color: var(--pd-muted, #888);
+  vertical-align: middle;
+}
+.pd-devact-tier-label .pd-devact-cell-legend {
+  width: 10px;
+  height: 10px;
+  margin: 0;
+}
 .pd-devact-day p {
   margin: 0.2em 0;
 }
