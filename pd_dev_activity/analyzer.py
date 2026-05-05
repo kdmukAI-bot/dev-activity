@@ -16,6 +16,7 @@ from personal_dashboard.core.result import ModuleResult, Status
 
 from . import storage
 from .scanner import load_config, run_scan
+from .storage import TIER_RANK
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,33 @@ def _safe_int(v: Any) -> int:
         return int(v)
     except (TypeError, ValueError):
         return 0
+
+
+def _seedsigner_share(ss_tier: str, ot_tier: str) -> float:
+    # Width fraction allocated to the seedsigner half on a split-day cell.
+    # Uses TIER_RANK so matched tiers (low+low, moderate+moderate) stay 50/50,
+    # while a heavy/light pairing (high vs trace → 4/(4+1)=0.8) leans visibly
+    # toward the louder side. Falls back to 0.5 if both sides are 'none'
+    # (the split-cell branch shouldn't fire in that case anyway).
+    rs = TIER_RANK.get(ss_tier, 0)
+    ro = TIER_RANK.get(ot_tier, 0)
+    if rs == 0 and ro == 0:
+        return 0.5
+    return rs / (rs + ro)
+
+
+def _enrich_with_share(rows: list[dict]) -> None:
+    """In place: stamp `seedsigner_share` on both rows of any split day."""
+    by_day: dict[str, dict[str, dict]] = {}
+    for r in rows:
+        by_day.setdefault(r["day"], {})[r["category"]] = r
+    for day_rows in by_day.values():
+        ss = day_rows.get("seedsigner")
+        ot = day_rows.get("other")
+        if ss and ot and ss.get("overall_tier") != "none" and ot.get("overall_tier") != "none":
+            share = _seedsigner_share(ss["overall_tier"], ot["overall_tier"])
+            ss["seedsigner_share"] = share
+            ot["seedsigner_share"] = share
 
 
 class Analyzer:
@@ -167,6 +195,8 @@ class Analyzer:
                     (cutoff_year,),
                 )
             ]
+            _enrich_with_share(year_rows)
+            _enrich_with_share(recent_days)
             # Pivot to per-day {seedsigner, other} dicts.
             grid: dict[str, dict[str, dict]] = {}
             for row in year_rows:
@@ -276,12 +306,27 @@ class Analyzer:
                 (day,),
             ).fetchone()
             telegram_msgs = int(telegram_total["n"]) if telegram_total else 0
+
+            ss_tier = "none"
+            ot_tier = "none"
+            for r in conn.execute(
+                "SELECT category, overall_tier FROM daily_tiers WHERE day = ?",
+                (day,),
+            ):
+                if r["category"] == "seedsigner":
+                    ss_tier = r["overall_tier"]
+                elif r["category"] == "other":
+                    ot_tier = r["overall_tier"]
+            seedsigner_share = _seedsigner_share(ss_tier, ot_tier)
             return {
                 "day": day,
                 "commits": commits,
                 "file_touches": file_touches,
                 "lens_events": lens_events,
                 "telegram_msgs": telegram_msgs,
+                "ss_tier": ss_tier,
+                "ot_tier": ot_tier,
+                "seedsigner_share": seedsigner_share,
             }
 
     def _read_year_for_json(self) -> list[dict]:
@@ -290,7 +335,7 @@ class Analyzer:
         today = date.today()
         cutoff = (today - timedelta(days=365)).isoformat()
         with storage.connect(self._db_path) as conn:
-            return [
+            rows = [
                 dict(row)
                 for row in conn.execute(
                     """
@@ -305,6 +350,8 @@ class Analyzer:
                     (cutoff,),
                 )
             ]
+        _enrich_with_share(rows)
+        return rows
 
     # ------------------------------------------------------------------
     # Routes

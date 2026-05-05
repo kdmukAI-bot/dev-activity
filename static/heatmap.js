@@ -18,27 +18,18 @@
       outline.style.display = "none";
       return;
     }
+    // For both solo cells and split cells, the element carrying data-day is a
+    // full-square rect (the solo cell rect or the overlay rect on top of a
+    // split). Reading geometry off it directly always wraps the whole day.
     const target = cellsG.querySelector(`[data-day="${day}"]`);
     if (!target) {
       outline.style.display = "none";
       return;
     }
-    let x, y, w, h;
-    if (target.tagName.toLowerCase() === "g") {
-      // Split cell: two half-rects. Span both.
-      const left = target.querySelector("rect");
-      const right = left.nextElementSibling;
-      x = parseFloat(left.getAttribute("x"));
-      y = parseFloat(left.getAttribute("y"));
-      h = parseFloat(left.getAttribute("height"));
-      w = parseFloat(left.getAttribute("width")) +
-          parseFloat(right.getAttribute("width"));
-    } else {
-      x = parseFloat(target.getAttribute("x"));
-      y = parseFloat(target.getAttribute("y"));
-      w = parseFloat(target.getAttribute("width"));
-      h = parseFloat(target.getAttribute("height"));
-    }
+    const x = parseFloat(target.getAttribute("x"));
+    const y = parseFloat(target.getAttribute("y"));
+    const w = parseFloat(target.getAttribute("width"));
+    const h = parseFloat(target.getAttribute("height"));
     outline.setAttribute("x", x - 1);
     outline.setAttribute("y", y - 1);
     outline.setAttribute("width", w + 2);
@@ -147,15 +138,46 @@
                 mkRect(x, y, SQ, SQ, `pd-devact-cell pd-devact-ss-none pd-devact-ot-${otTier}`, iso, tooltip),
               );
             } else {
-              const left = mkRect(x, y, SQ / 2, SQ, `pd-devact-cell pd-devact-cell-half-l pd-devact-ss-${ssTier}`, iso, tooltip);
-              const right = mkRect(x + SQ / 2, y, SQ / 2, SQ, `pd-devact-cell pd-devact-cell-half-r pd-devact-ot-${otTier}`, iso, tooltip);
+              // Weight the split by relative tier intensity. Server stamps
+              // seedsigner_share on both rows of a split day; fall back to the
+              // local TIER_RANK ratio if missing (older payload / no data).
+              let share = (ss && typeof ss.seedsigner_share === "number")
+                ? ss.seedsigner_share
+                : (ot && typeof ot.seedsigner_share === "number")
+                  ? ot.seedsigner_share
+                  : null;
+              if (share == null) {
+                const rs = TIER_RANK[ssTier];
+                const ro = TIER_RANK[otTier];
+                share = (rs + ro) > 0 ? rs / (rs + ro) : 0.5;
+              }
+              const ssW = SQ * share;
+              const otW = SQ - ssW;
+              // Halves are visual-only — they get pointer-events:none in CSS so
+              // hover/click land on the overlay rect that sits above them.
+              const left = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+              left.setAttribute("x", x);
+              left.setAttribute("y", y);
+              left.setAttribute("width", ssW);
+              left.setAttribute("height", SQ);
+              left.setAttribute("rx", 1);
+              left.setAttribute("class", `pd-devact-cell pd-devact-cell-half-l pd-devact-ss-${ssTier}`);
+              const right = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+              right.setAttribute("x", x + ssW);
+              right.setAttribute("y", y);
+              right.setAttribute("width", otW);
+              right.setAttribute("height", SQ);
+              right.setAttribute("rx", 1);
+              right.setAttribute("class", `pd-devact-cell pd-devact-cell-half-r pd-devact-ot-${otTier}`);
+              const overlay = mkRect(
+                x, y, SQ, SQ,
+                "pd-devact-cell pd-devact-cell-overlay",
+                iso, tooltip,
+              );
               const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-              g.setAttribute("data-day", iso);
               g.appendChild(left);
               g.appendChild(right);
-              const t = document.createElementNS("http://www.w3.org/2000/svg", "title");
-              t.textContent = tooltip;
-              g.appendChild(t);
+              g.appendChild(overlay);
               cellsG.appendChild(g);
             }
 

@@ -2,7 +2,33 @@
 {% set d = data %}
 
 <div class="pd-devact-day">
-  <h3>{{ d.day }}</h3>
+  <div class="pd-devact-day-header">
+    {% set ss_t = d.ss_tier or 'none' %}
+    {% set ot_t = d.ot_tier or 'none' %}
+    {% if ss_t != 'none' or ot_t != 'none' %}
+      {% set blowup_size = 96 %}
+      <svg class="pd-devact-day-blowup"
+           width="{{ blowup_size }}" height="{{ blowup_size }}"
+           viewBox="0 0 {{ blowup_size }} {{ blowup_size }}"
+           xmlns="http://www.w3.org/2000/svg"
+           aria-label="Activity split for {{ d.day }}">
+        {% if ss_t == 'none' %}
+          <rect x="0" y="0" width="{{ blowup_size }}" height="{{ blowup_size }}"
+                class="pd-devact-cell pd-devact-ss-none pd-devact-ot-{{ ot_t }}"></rect>
+        {% elif ot_t == 'none' %}
+          <rect x="0" y="0" width="{{ blowup_size }}" height="{{ blowup_size }}"
+                class="pd-devact-cell pd-devact-ss-{{ ss_t }} pd-devact-ot-none"></rect>
+        {% else %}
+          {% set left_w = (blowup_size * (d.seedsigner_share or 0.5)) | round(2) %}
+          <rect x="0" y="0" width="{{ left_w }}" height="{{ blowup_size }}"
+                class="pd-devact-cell pd-devact-cell-half-l pd-devact-ss-{{ ss_t }}"></rect>
+          <rect x="{{ left_w }}" y="0" width="{{ blowup_size - left_w }}" height="{{ blowup_size }}"
+                class="pd-devact-cell pd-devact-cell-half-r pd-devact-ot-{{ ot_t }}"></rect>
+        {% endif %}
+      </svg>
+    {% endif %}
+    <h3>{{ d.day }}</h3>
+  </div>
 
   {% if d.commits %}
     {% set fresh_commits = d.commits | selectattr('active_on_commit_day', 'equalto', 1) | list %}

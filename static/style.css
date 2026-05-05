@@ -60,6 +60,12 @@
 
 .pd-devact-cell:hover { stroke: rgba(255, 255, 255, 0.6); stroke-width: 1; cursor: pointer; }
 
+/* Split-cell halves are visual only; the overlay rect (full square, on top)
+   owns the hover tooltip + click target so the entire square reads as one
+   day rather than two clickable wedges. */
+.pd-devact-cell-half-l, .pd-devact-cell-half-r { pointer-events: none; }
+.pd-devact-cell-overlay { fill: transparent; }
+
 /* Outline marking the currently-selected day on the detail-page heatmap. The
    <rect> is positioned by JS to wrap the active cell; pointer-events: none
    keeps clicks falling through to the underlying cell so re-clicking stays
@@ -243,6 +249,14 @@
 .pd-devact-day h3 {
   margin: 0 0 0.6em 0;
 }
+.pd-devact-day-header {
+  display: flex;
+  align-items: center;
+  gap: 1em;
+  margin-bottom: 0.6em;
+}
+.pd-devact-day-header h3 { margin: 0; }
+.pd-devact-day-blowup { flex-shrink: 0; display: block; }
 .pd-devact-day p {
   margin: 0.2em 0;
 }
