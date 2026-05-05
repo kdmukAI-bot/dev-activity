@@ -23,6 +23,7 @@ seedsigner_repos = [
   "seedsigner-raspi-lvgl",
   "esp-board-common",
   "esp-camera-pipeline",
+  "embit",
   "project-lens",
   "project-lens-seedsigner-config",
   "project-pm",
