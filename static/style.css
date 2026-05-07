@@ -1,27 +1,33 @@
-/* dev-activity: heatmap + split-square colours.
+/* dev-activity: heatmap + split-cell colours.
 
-   Tier shades. Orange = SeedSigner (anchored at the SeedSigner brand
-   ACCENT_COLOR #FF9F0A), Teal = other. "none" is the empty/background gray.
-   Low → High climbs from "barely-distinguishable from background" up to
-   "fully saturated brand color", so a bright square reads as a busy day. */
+   Three categories, three colour ramps:
+     ss = SeedSigner — orange (anchored on logo orange #FF7300)
+     tl = tools      — teal   (general dev-tooling work)
+     ot = other      — violet (personal projects)
+   SeedSigner has four levels (trace/low/moderate/high); the 'trace' band
+   only exists for SeedSigner because it's reserved for low-quality signals
+   like telegram chatter, which are seedsigner-only. Tools and Other use
+   three levels (low/moderate/high). "none" is the empty/background gray
+   for all three categories. */
 :root {
   --pd-devact-empty:        rgba(255, 255, 255, 0.07);
   /* Orange ramp anchored on the SeedSigner *logo* orange #FF7300, sampled
      from src/seedsigner/resources/img/logo_black_240.png. (The GUI's
      ACCENT_COLOR #FF9F0A is yellower than the brand mark.) */
-  /* 'trace' is a sub-low band for low-quality signals (telegram chatter).
-     Targeted as a smooth halfway-ish step between the empty gray and 'low':
-     same approximate luminance as empty, but with a faint warm/cool tint so
-     the cell reads as "barely something" rather than a saturated brown jump
-     out of the neutral background. */
+  /* 'trace' is a sub-low band for low-quality signals (telegram chatter):
+     same approximate luminance as empty, with a faint warm/cool tint so
+     the cell reads as "barely something" rather than a saturated brown
+     jump out of the neutral background. */
   --pd-devact-ss-trace:     #432f26;
   --pd-devact-ss-low:       #5a3220;
   --pd-devact-ss-moderate:  #a04500;
   --pd-devact-ss-high:      #ff7300;
-  --pd-devact-ot-trace:     #2d4242;
-  --pd-devact-ot-low:       #2d5757;
-  --pd-devact-ot-moderate:  #0e7d7d;
-  --pd-devact-ot-high:      #00cccc;
+  --pd-devact-tl-low:       #2d5757;
+  --pd-devact-tl-moderate:  #0e7d7d;
+  --pd-devact-tl-high:      #00cccc;
+  --pd-devact-ot-low:       #4a3870;
+  --pd-devact-ot-moderate:  #7c4dba;
+  --pd-devact-ot-high:      #a855f7;
 }
 
 .pd-devact-cell { fill: var(--pd-devact-empty); }
@@ -29,7 +35,7 @@
 /* Empty / no activity — uses --pd-devact-empty (a faint white tint over
    whatever card background is behind it), so the cell stays visible without
    needing an outline. */
-.pd-devact-ss-none.pd-devact-ot-none {
+.pd-devact-ss-none.pd-devact-tl-none.pd-devact-ot-none {
   fill: var(--pd-devact-empty);
 }
 
@@ -39,31 +45,40 @@
 .pd-devact-ss-moderate { fill: var(--pd-devact-ss-moderate); }
 .pd-devact-ss-high     { fill: var(--pd-devact-ss-high); }
 
-/* Other shades (teal) */
-.pd-devact-ot-trace    { fill: var(--pd-devact-ot-trace); }
+/* Tools shades (teal) — 3 levels; no 'trace' (seedsigner-only) */
+.pd-devact-tl-low      { fill: var(--pd-devact-tl-low); }
+.pd-devact-tl-moderate { fill: var(--pd-devact-tl-moderate); }
+.pd-devact-tl-high     { fill: var(--pd-devact-tl-high); }
+
+/* Other shades (violet) — 3 levels; no 'trace' (seedsigner-only) */
 .pd-devact-ot-low      { fill: var(--pd-devact-ot-low); }
 .pd-devact-ot-moderate { fill: var(--pd-devact-ot-moderate); }
 .pd-devact-ot-high     { fill: var(--pd-devact-ot-high); }
 
-/* Half-square overrides for split-day rendering. The l/r classes are layered
-   on top of pd-devact-ss-X / pd-devact-ot-X so the SS class wins for the left
-   half and the OT class wins for the right half. The selectors below pin the
-   correct color for each half based on the dominant class. */
-.pd-devact-cell-half-l.pd-devact-ss-trace    { fill: var(--pd-devact-ss-trace); }
-.pd-devact-cell-half-l.pd-devact-ss-low      { fill: var(--pd-devact-ss-low); }
-.pd-devact-cell-half-l.pd-devact-ss-moderate { fill: var(--pd-devact-ss-moderate); }
-.pd-devact-cell-half-l.pd-devact-ss-high     { fill: var(--pd-devact-ss-high); }
-.pd-devact-cell-half-r.pd-devact-ot-trace    { fill: var(--pd-devact-ot-trace); }
-.pd-devact-cell-half-r.pd-devact-ot-low      { fill: var(--pd-devact-ot-low); }
-.pd-devact-cell-half-r.pd-devact-ot-moderate { fill: var(--pd-devact-ot-moderate); }
-.pd-devact-cell-half-r.pd-devact-ot-high     { fill: var(--pd-devact-ot-high); }
+/* Stripe overrides for split-day rendering. Three vertical stripes:
+   third-l = SeedSigner (left), third-m = tools (middle), third-r = other
+   (right). The pinning rules are needed because each stripe rect carries
+   tier classes from all three category prefixes, but only the matching
+   prefix should win for that stripe. */
+.pd-devact-cell-third-l.pd-devact-ss-trace    { fill: var(--pd-devact-ss-trace); }
+.pd-devact-cell-third-l.pd-devact-ss-low      { fill: var(--pd-devact-ss-low); }
+.pd-devact-cell-third-l.pd-devact-ss-moderate { fill: var(--pd-devact-ss-moderate); }
+.pd-devact-cell-third-l.pd-devact-ss-high     { fill: var(--pd-devact-ss-high); }
+.pd-devact-cell-third-m.pd-devact-tl-low      { fill: var(--pd-devact-tl-low); }
+.pd-devact-cell-third-m.pd-devact-tl-moderate { fill: var(--pd-devact-tl-moderate); }
+.pd-devact-cell-third-m.pd-devact-tl-high     { fill: var(--pd-devact-tl-high); }
+.pd-devact-cell-third-r.pd-devact-ot-low      { fill: var(--pd-devact-ot-low); }
+.pd-devact-cell-third-r.pd-devact-ot-moderate { fill: var(--pd-devact-ot-moderate); }
+.pd-devact-cell-third-r.pd-devact-ot-high     { fill: var(--pd-devact-ot-high); }
 
 .pd-devact-cell:hover { stroke: rgba(255, 255, 255, 0.6); stroke-width: 1; cursor: pointer; }
 
-/* Split-cell halves are visual only; the overlay rect (full square, on top)
+/* Split-cell stripes are visual only; the overlay rect (full square, on top)
    owns the hover tooltip + click target so the entire square reads as one
-   day rather than two clickable wedges. */
-.pd-devact-cell-half-l, .pd-devact-cell-half-r { pointer-events: none; }
+   day rather than three clickable wedges. */
+.pd-devact-cell-third-l,
+.pd-devact-cell-third-m,
+.pd-devact-cell-third-r { pointer-events: none; }
 .pd-devact-cell-overlay { fill: transparent; }
 
 /* Outline marking the currently-selected day on the detail-page heatmap. The
@@ -75,57 +90,6 @@
   stroke: rgba(255, 255, 255, 0.95);
   stroke-width: 1.5;
   pointer-events: none;
-}
-
-/* Mini-heatmap squares in the widget (HTML, not SVG) */
-.pd-devact-mini-heatmap {
-  display: flex;
-  gap: 2px;
-  margin: 0.5em 0;
-  flex-wrap: wrap;
-}
-.pd-devact-cell-mini {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  background: var(--pd-devact-empty);
-}
-/* Solid color when only one side has activity. */
-.pd-devact-cell-mini.pd-devact-ss-low.pd-devact-ot-none      { background: var(--pd-devact-ss-low); }
-.pd-devact-cell-mini.pd-devact-ss-moderate.pd-devact-ot-none { background: var(--pd-devact-ss-moderate); }
-.pd-devact-cell-mini.pd-devact-ss-high.pd-devact-ot-none     { background: var(--pd-devact-ss-high); }
-.pd-devact-cell-mini.pd-devact-ss-none.pd-devact-ot-low      { background: var(--pd-devact-ot-low); }
-.pd-devact-cell-mini.pd-devact-ss-none.pd-devact-ot-moderate { background: var(--pd-devact-ot-moderate); }
-.pd-devact-cell-mini.pd-devact-ss-none.pd-devact-ot-high     { background: var(--pd-devact-ot-high); }
-
-/* Split: gradient half-half */
-.pd-devact-cell-mini.pd-devact-ss-low.pd-devact-ot-low {
-  background: linear-gradient(90deg, var(--pd-devact-ss-low) 50%, var(--pd-devact-ot-low) 50%);
-}
-.pd-devact-cell-mini.pd-devact-ss-low.pd-devact-ot-moderate {
-  background: linear-gradient(90deg, var(--pd-devact-ss-low) 50%, var(--pd-devact-ot-moderate) 50%);
-}
-.pd-devact-cell-mini.pd-devact-ss-low.pd-devact-ot-high {
-  background: linear-gradient(90deg, var(--pd-devact-ss-low) 50%, var(--pd-devact-ot-high) 50%);
-}
-.pd-devact-cell-mini.pd-devact-ss-moderate.pd-devact-ot-low {
-  background: linear-gradient(90deg, var(--pd-devact-ss-moderate) 50%, var(--pd-devact-ot-low) 50%);
-}
-.pd-devact-cell-mini.pd-devact-ss-moderate.pd-devact-ot-moderate {
-  background: linear-gradient(90deg, var(--pd-devact-ss-moderate) 50%, var(--pd-devact-ot-moderate) 50%);
-}
-.pd-devact-cell-mini.pd-devact-ss-moderate.pd-devact-ot-high {
-  background: linear-gradient(90deg, var(--pd-devact-ss-moderate) 50%, var(--pd-devact-ot-high) 50%);
-}
-.pd-devact-cell-mini.pd-devact-ss-high.pd-devact-ot-low {
-  background: linear-gradient(90deg, var(--pd-devact-ss-high) 50%, var(--pd-devact-ot-low) 50%);
-}
-.pd-devact-cell-mini.pd-devact-ss-high.pd-devact-ot-moderate {
-  background: linear-gradient(90deg, var(--pd-devact-ss-high) 50%, var(--pd-devact-ot-moderate) 50%);
-}
-.pd-devact-cell-mini.pd-devact-ss-high.pd-devact-ot-high {
-  background: linear-gradient(90deg, var(--pd-devact-ss-high) 50%, var(--pd-devact-ot-high) 50%);
 }
 
 /* Legend swatches (HTML) */
@@ -142,7 +106,9 @@
 .pd-devact-cell-legend.pd-devact-ss-low       { background: var(--pd-devact-ss-low); }
 .pd-devact-cell-legend.pd-devact-ss-moderate  { background: var(--pd-devact-ss-moderate); }
 .pd-devact-cell-legend.pd-devact-ss-high      { background: var(--pd-devact-ss-high); }
-.pd-devact-cell-legend.pd-devact-ot-trace     { background: var(--pd-devact-ot-trace); }
+.pd-devact-cell-legend.pd-devact-tl-low       { background: var(--pd-devact-tl-low); }
+.pd-devact-cell-legend.pd-devact-tl-moderate  { background: var(--pd-devact-tl-moderate); }
+.pd-devact-cell-legend.pd-devact-tl-high      { background: var(--pd-devact-tl-high); }
 .pd-devact-cell-legend.pd-devact-ot-low       { background: var(--pd-devact-ot-low); }
 .pd-devact-cell-legend.pd-devact-ot-moderate  { background: var(--pd-devact-ot-moderate); }
 .pd-devact-cell-legend.pd-devact-ot-high      { background: var(--pd-devact-ot-high); }
@@ -273,8 +239,8 @@
 
 /* Inline tier rating displayed next to a section heading: a small color
    swatch + the tier name (e.g. "low" with an orange square). Sits in the
-   same line as the h4 text; for sections that span both categories
-   (commits, uncommitted, lens), two labels render side by side. */
+   same line as the h4 text; for sections that span all categories
+   (commits, uncommitted, lens), three labels render side by side. */
 .pd-devact-tier-label {
   display: inline-flex;
   align-items: center;
@@ -313,7 +279,8 @@
 .pd-devact-day-msg  { color: var(--pd-text, #ddd); }
 .pd-devact-day-stats { color: var(--pd-muted, #888); font-size: 0.85em; }
 .pd-devact-cat-seedsigner .pd-devact-day-project { color: var(--pd-devact-ss-high); }
-.pd-devact-cat-other .pd-devact-day-project { color: var(--pd-devact-ot-high); }
+.pd-devact-cat-tools      .pd-devact-day-project { color: var(--pd-devact-tl-high); }
+.pd-devact-cat-other      .pd-devact-day-project { color: var(--pd-devact-ot-high); }
 .pd-devact-day-kind {
   display: inline-block;
   font-size: 0.8em;

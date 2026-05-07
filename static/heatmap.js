@@ -58,13 +58,17 @@
     return rect;
   }
 
-  function fmtSide(label, row) {
+  function fmtSide(label, row, opts) {
     if (!row) return `${label}: —`;
-    return `${label}: ${row.n_commits_personal ?? 0} fork-commits / ${row.n_commits_bot ?? 0} bot-commits / ${row.n_committed_files} files / ${row.n_committed_loc_effort} LoC committed / ${row.n_uncommitted_files} WIP files (${row.n_uncommitted_loc_effort} LoC) / ${row.n_lens_review ?? 0} review / ${row.n_lens_discussion ?? 0} disc / ${row.n_telegram_msgs ?? 0} tg → ${row.overall_tier}`;
+    const split = opts && opts.splitCommits;
+    const commitFrag = split
+      ? `${row.n_commits_personal ?? 0} fork-commits / ${row.n_commits_bot ?? 0} bot-commits`
+      : `${row.n_commits ?? (row.n_commits_personal ?? 0) + (row.n_commits_bot ?? 0)} commits`;
+    return `${label}: ${commitFrag} / ${row.n_committed_files} files / ${row.n_committed_loc_effort} LoC committed / ${row.n_uncommitted_files} WIP files (${row.n_uncommitted_loc_effort} LoC) / ${row.n_lens_review ?? 0} review / ${row.n_lens_discussion ?? 0} disc / ${row.n_telegram_msgs ?? 0} tg → ${row.overall_tier}`;
   }
 
-  function buildTooltip(iso, ss, ot) {
-    return `${iso}\n${fmtSide("SeedSigner", ss)}\n${fmtSide("Other", ot)}`;
+  function buildTooltip(iso, ss, tl, ot) {
+    return `${iso}\n${fmtSide("SeedSigner", ss, { splitCommits: true })}\n${fmtSide("Tools", tl)}\n${fmtSide("Other", ot)}`;
   }
 
   window.renderHeatmap = function (opts) {
@@ -117,66 +121,96 @@
             const y = PAD_TOP + row * (SQ + GAP);
             const cellInfo = byDay[iso] || {};
             const ss = cellInfo["seedsigner"];
+            const tl = cellInfo["tools"];
             const ot = cellInfo["other"];
             const ssTier = ss ? ss.overall_tier : "none";
+            const tlTier = tl ? tl.overall_tier : "none";
             const otTier = ot ? ot.overall_tier : "none";
-            const tooltip = buildTooltip(iso, ss, ot);
+            const tooltip = buildTooltip(iso, ss, tl, ot);
 
-            if (ssTier === "none" && otTier === "none") {
+            const nonzeroCount =
+              (ssTier !== "none" ? 1 : 0) +
+              (tlTier !== "none" ? 1 : 0) +
+              (otTier !== "none" ? 1 : 0);
+
+            if (nonzeroCount === 0) {
               const rect = mkRect(
                 x, y, SQ, SQ,
-                "pd-devact-cell pd-devact-ss-none pd-devact-ot-none",
+                "pd-devact-cell pd-devact-ss-none pd-devact-tl-none pd-devact-ot-none",
                 iso, tooltip,
               );
               cellsG.appendChild(rect);
-            } else if (otTier === "none") {
-              cellsG.appendChild(
-                mkRect(x, y, SQ, SQ, `pd-devact-cell pd-devact-ss-${ssTier} pd-devact-ot-none`, iso, tooltip),
-              );
-            } else if (ssTier === "none") {
-              cellsG.appendChild(
-                mkRect(x, y, SQ, SQ, `pd-devact-cell pd-devact-ss-none pd-devact-ot-${otTier}`, iso, tooltip),
-              );
+            } else if (nonzeroCount === 1) {
+              // Solo-category day: paint the whole cell with that category's
+              // tier color. The other two prefixes get -none to keep the
+              // class set self-describing.
+              const cls =
+                `pd-devact-cell pd-devact-ss-${ssTier} pd-devact-tl-${tlTier} pd-devact-ot-${otTier}`;
+              cellsG.appendChild(mkRect(x, y, SQ, SQ, cls, iso, tooltip));
             } else {
-              // Weight the split by relative tier intensity. Server stamps
-              // seedsigner_share on both rows of a split day; fall back to the
-              // local TIER_RANK ratio if missing (older payload / no data).
-              let share = (ss && typeof ss.seedsigner_share === "number")
-                ? ss.seedsigner_share
-                : (ot && typeof ot.seedsigner_share === "number")
-                  ? ot.seedsigner_share
-                  : null;
-              if (share == null) {
-                const rs = TIER_RANK[ssTier];
-                const ro = TIER_RANK[otTier];
-                share = (rs + ro) > 0 ? rs / (rs + ro) : 0.5;
+              // Multi-category day: render up to three vertical stripes
+              // (ss | tl | ot), widths weighted by tier intensity. Stripes
+              // for 'none' categories get zero width and aren't rendered, so
+              // a 2-category day still produces two stripes (just at the L
+              // and R positions appropriate to which categories are active).
+              // Server stamps {ss,tl,ot}_share on each row; fall back to a
+              // local TIER_RANK ratio if missing.
+              const findShare = (key) => {
+                for (const r of [ss, tl, ot]) {
+                  if (r && typeof r[key] === "number") return r[key];
+                }
+                return null;
+              };
+              let ssShare = findShare("ss_share");
+              let tlShare = findShare("tl_share");
+              let otShare = findShare("ot_share");
+              if (ssShare == null || tlShare == null || otShare == null) {
+                const rs = TIER_RANK[ssTier] || 0;
+                const rt = TIER_RANK[tlTier] || 0;
+                const ro = TIER_RANK[otTier] || 0;
+                const total = rs + rt + ro;
+                if (total > 0) {
+                  ssShare = rs / total;
+                  tlShare = rt / total;
+                  otShare = ro / total;
+                } else {
+                  ssShare = tlShare = otShare = 1 / 3;
+                }
               }
-              const ssW = SQ * share;
-              const otW = SQ - ssW;
-              // Halves are visual-only — they get pointer-events:none in CSS so
-              // hover/click land on the overlay rect that sits above them.
-              const left = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-              left.setAttribute("x", x);
-              left.setAttribute("y", y);
-              left.setAttribute("width", ssW);
-              left.setAttribute("height", SQ);
-              left.setAttribute("rx", 1);
-              left.setAttribute("class", `pd-devact-cell pd-devact-cell-half-l pd-devact-ss-${ssTier}`);
-              const right = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-              right.setAttribute("x", x + ssW);
-              right.setAttribute("y", y);
-              right.setAttribute("width", otW);
-              right.setAttribute("height", SQ);
-              right.setAttribute("rx", 1);
-              right.setAttribute("class", `pd-devact-cell pd-devact-cell-half-r pd-devact-ot-${otTier}`);
+
+              // Convert shares to integer pixel widths that sum to SQ.
+              // Floor each then distribute the remainder to the largest
+              // shares to avoid a sub-pixel gap on the right edge.
+              const wSS = Math.floor(SQ * ssShare);
+              const wTL = Math.floor(SQ * tlShare);
+              let wOT = SQ - wSS - wTL;
+              if (wOT < 0) wOT = 0;
+
+              const stripes = [
+                { w: wSS, x: x,                pos: "l", prefix: "ss", tier: ssTier },
+                { w: wTL, x: x + wSS,          pos: "m", prefix: "tl", tier: tlTier },
+                { w: wOT, x: x + wSS + wTL,    pos: "r", prefix: "ot", tier: otTier },
+              ];
+              const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+              for (const s of stripes) {
+                if (s.w <= 0 || s.tier === "none") continue;
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                rect.setAttribute("x", s.x);
+                rect.setAttribute("y", y);
+                rect.setAttribute("width", s.w);
+                rect.setAttribute("height", SQ);
+                rect.setAttribute("rx", 1);
+                rect.setAttribute(
+                  "class",
+                  `pd-devact-cell pd-devact-cell-third-${s.pos} pd-devact-${s.prefix}-${s.tier}`,
+                );
+                g.appendChild(rect);
+              }
               const overlay = mkRect(
                 x, y, SQ, SQ,
                 "pd-devact-cell pd-devact-cell-overlay",
                 iso, tooltip,
               );
-              const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-              g.appendChild(left);
-              g.appendChild(right);
               g.appendChild(overlay);
               cellsG.appendChild(g);
             }

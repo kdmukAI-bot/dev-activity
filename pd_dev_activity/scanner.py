@@ -57,6 +57,7 @@ def run_scan(config: dict, db_path: Path | None = None) -> dict:
     _ensure_log_dir()
 
     seedsigner_repos = set(config.get("seedsigner_repos") or [])
+    other_dirs = list(config.get("other_dirs") or [])
     git_author_substrings = list(config.get("git_author_substrings") or [])
     github_logins = list(config.get("github_logins") or [])
     scan_roots = list(config.get("scan_roots") or [])
@@ -115,6 +116,7 @@ def run_scan(config: dict, db_path: Path | None = None) -> dict:
                     conn,
                     repo_path,
                     seedsigner_repos=seedsigner_repos,
+                    other_dirs=other_dirs,
                     git_author_substrings=git_author_substrings,
                     since=since,
                     now_iso=now_iso,
@@ -160,7 +162,9 @@ def run_scan(config: dict, db_path: Path | None = None) -> dict:
             logger.exception("telegram scan failed")
 
         # 6: recompute daily_tiers
-        storage.recompute_daily_tiers(conn, min_nonzero_days)
+        storage.recompute_daily_tiers(
+            conn, min_nonzero_days, seedsigner_repos=seedsigner_repos
+        )
 
         # 7: meta
         finished_at = datetime.now()

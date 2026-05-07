@@ -92,7 +92,7 @@ def scan_personal_fork(
         return
 
     repo_basename = owner_repo.split("/", 1)[1]
-    category = "seedsigner" if repo_basename in seedsigner_repos else "other"
+    category = "seedsigner" if repo_basename in seedsigner_repos else "tools"
     remote_url = f"https://github.com/{owner_repo}.git"
     project_id = storage.upsert_project(
         conn,

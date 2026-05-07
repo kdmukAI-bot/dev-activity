@@ -407,12 +407,18 @@ def scan_local_tree(
     repo_path: Path,
     *,
     seedsigner_repos: set[str],
+    other_dirs: list[str],
     git_author_substrings: list[str],
     since: str | None,
     now_iso: str,
 ) -> None:
     name = repo_path.name
-    category = "seedsigner" if name in seedsigner_repos else "other"
+    category = storage.classify_local_repo(
+        repo_path,
+        name,
+        seedsigner_repos=seedsigner_repos,
+        other_dirs=other_dirs,
+    )
     remote_url = repo_remote_url(repo_path)
     project_id = storage.upsert_project(
         conn,

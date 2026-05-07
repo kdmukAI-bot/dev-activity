@@ -78,10 +78,14 @@ CREATE INDEX IF NOT EXISTS telegram_by_day ON telegram_activity(day);
 CREATE TABLE IF NOT EXISTS daily_tiers (
     day                          TEXT NOT NULL,
     category                     TEXT NOT NULL,
-    -- Commit count is split by source. personal_fork commits represent
-    -- deliberate work pushed to the user's public forks; bot/local-tree
-    -- commits represent the bulk of routine kdmukAI-bot work. Each gets
-    -- its own banding strategy (see recompute_daily_tiers).
+    -- For 'seedsigner', commits are split by author identity. personal_fork
+    -- commits (kdmukai user) represent deliberate work pushed to the user's
+    -- public forks; bot/local-tree commits (kdmukAI-bot) represent the bulk
+    -- of routine autonomous work. Each gets its own banding strategy. For
+    -- 'tools' and 'other', personal-fork pushes don't apply, so n_commits
+    -- (= personal + bot, in practice all bot) is what feeds the overall
+    -- tier and the per_personal/per_bot dimensions are populated but unused.
+    n_commits                    INTEGER NOT NULL,
     n_commits_personal           INTEGER NOT NULL,
     n_commits_bot                INTEGER NOT NULL,
     n_committed_files            INTEGER NOT NULL,
@@ -91,6 +95,7 @@ CREATE TABLE IF NOT EXISTS daily_tiers (
     n_lens_review                INTEGER NOT NULL,
     n_lens_discussion            INTEGER NOT NULL,
     n_telegram_msgs              INTEGER NOT NULL,
+    tier_commits                 TEXT NOT NULL,
     tier_commits_personal        TEXT NOT NULL,
     tier_commits_bot             TEXT NOT NULL,
     tier_committed_files         TEXT NOT NULL,
@@ -200,6 +205,7 @@ def connect(db_path: os.PathLike | str | None = None) -> Iterator[sqlite3.Connec
             "n_telegram_msgs" not in existing
             or "n_lens_review" not in existing
             or "n_commits_personal" not in existing
+            or "n_commits" not in existing
         )
         if schema_outdated:
             conn.execute("DROP TABLE daily_tiers")
@@ -496,11 +502,74 @@ def _band_assigner_lens(values: Iterable[int]):
     return assign
 
 
-def recompute_daily_tiers(conn: sqlite3.Connection, min_nonzero_days: int) -> None:
+def classify_local_repo(
+    repo_path: Path,
+    name: str,
+    *,
+    seedsigner_repos: Iterable[str],
+    other_dirs: Iterable[str],
+) -> str:
+    """Classify a local-tree repo as 'seedsigner', 'other', or 'tools'.
+
+    Order matters: seedsigner_repos by name takes precedence over directory
+    placement (so e.g. ~/dev/tools/project-lens stays 'seedsigner'). Path
+    matching uses directory-component containment via Path.is_relative_to,
+    so '~/dev/misc' won't false-match '~/dev/misc-anything-else'.
+    """
+    if name in set(seedsigner_repos or []):
+        return "seedsigner"
+    try:
+        repo_resolved = repo_path.resolve()
+    except OSError:
+        return "tools"
+    for d in other_dirs or []:
+        try:
+            other_resolved = Path(d).expanduser().resolve()
+        except OSError:
+            continue
+        try:
+            if repo_resolved.is_relative_to(other_resolved):
+                return "other"
+        except ValueError:
+            continue
+    return "tools"
+
+
+def lens_repo_category(repo: str, seedsigner_repos: Iterable[str]) -> str:
+    """Classify a lens event's `owner/repo` string into 'seedsigner' or 'tools'.
+
+    Two conditions promote a repo to 'seedsigner':
+      - it lives under the SeedSigner GitHub org (any repo there is by
+        definition SeedSigner work, even if not explicitly listed); OR
+      - its basename appears in `seedsigner_repos` (catches dependencies the
+        user treats as SeedSigner work — e.g. the upstream `embit` library
+        under `diybitcoinhardware/embit`).
+
+    Lens events come without local paths, so we can't apply directory-based
+    'other' classification — anything non-seedsigner falls through to 'tools'.
+    Project-lens is a SeedSigner-engagement DB so personal-project lens events
+    aren't expected anyway.
+    """
+    if not repo:
+        return "tools"
+    if repo.startswith("SeedSigner/"):
+        return "seedsigner"
+    basename = repo.split("/", 1)[-1]
+    if basename in set(seedsigner_repos or []):
+        return "seedsigner"
+    return "tools"
+
+
+def recompute_daily_tiers(
+    conn: sqlite3.Connection,
+    min_nonzero_days: int,
+    seedsigner_repos: Iterable[str] | None = None,
+) -> None:
     """Truncate daily_tiers and rebuild from raw tables.
 
     Per the plan: tiers shift as the distribution grows; full rebuild every scan.
     """
+    ss_repos_list = sorted(set(seedsigner_repos or []))
     # Aggregate per (day, category) from the three source tables.
     # We build a dict in Python because the joins+grouping are easier to read,
     # and it's all small enough that we don't need pure-SQL gymnastics.
@@ -513,6 +582,7 @@ def recompute_daily_tiers(conn: sqlite3.Connection, min_nonzero_days: int) -> No
         bucket = by_dc.get(key)
         if bucket is None:
             bucket = {
+                "n_commits": 0,
                 "n_commits_personal": 0,
                 "n_commits_bot": 0,
                 "n_committed_files": 0,
@@ -610,6 +680,7 @@ def recompute_daily_tiers(conn: sqlite3.Connection, min_nonzero_days: int) -> No
         b = _bucket(row["day"], row["category"])
         b["n_commits_personal"] = int(row["n_personal"])
         b["n_commits_bot"] = int(row["n_bot"])
+        b["n_commits"] = b["n_commits_personal"] + b["n_commits_bot"]
         b["n_committed_files"] = int(row["n_files"])
         b["n_committed_loc_effort"] = int(row["n_loc"])
 
@@ -637,13 +708,28 @@ def recompute_daily_tiers(conn: sqlite3.Connection, min_nonzero_days: int) -> No
     #     (substantive engagement on PR conversation threads and issues,
     #     plus the act of opening one in the first place — at least as
     #     deliberate as commenting).
+    # Lens repo classification: SeedSigner org always counts as 'seedsigner';
+    # additionally, repos whose basename appears in seedsigner_repos count
+    # (e.g. diybitcoinhardware/embit). Mirrors `lens_repo_category()`.
+    if ss_repos_list:
+        placeholders = ",".join("?" for _ in ss_repos_list)
+        category_case = (
+            "CASE "
+            "WHEN le.repo LIKE 'SeedSigner/%' THEN 'seedsigner' "
+            f"WHEN substr(le.repo, instr(le.repo, '/') + 1) IN ({placeholders}) "
+            "THEN 'seedsigner' "
+            "ELSE 'tools' END"
+        )
+        params: tuple = tuple(ss_repos_list)
+    else:
+        category_case = (
+            "CASE WHEN le.repo LIKE 'SeedSigner/%' THEN 'seedsigner' ELSE 'tools' END"
+        )
+        params = ()
     cur = conn.execute(
-        """
+        f"""
         SELECT le.day AS day,
-               CASE
-                 WHEN le.repo LIKE 'SeedSigner/%' THEN 'seedsigner'
-                 ELSE 'other'
-               END AS category,
+               {category_case} AS category,
                SUM(CASE WHEN kind = 'pr_review_comment' THEN 1 ELSE 0 END) AS n_review,
                SUM(CASE
                      WHEN kind IN ('pr_comment','issue_comment','pr_open','issue_open')
@@ -651,7 +737,8 @@ def recompute_daily_tiers(conn: sqlite3.Connection, min_nonzero_days: int) -> No
                    END) AS n_discussion
         FROM lens_events le
         GROUP BY le.day, category
-        """
+        """,
+        params,
     )
     for row in cur:
         b = _bucket(row["day"], row["category"])
@@ -673,6 +760,7 @@ def recompute_daily_tiers(conn: sqlite3.Connection, min_nonzero_days: int) -> No
 
     # Build per (category, dimension) banders from the historical distribution.
     dim_keys = (
+        "n_commits",
         "n_commits_personal",
         "n_commits_bot",
         "n_committed_files",
@@ -685,7 +773,7 @@ def recompute_daily_tiers(conn: sqlite3.Connection, min_nonzero_days: int) -> No
     )
 
     banders: dict[tuple[str, str], any] = {}
-    for category in ("seedsigner", "other"):
+    for category in ("seedsigner", "tools", "other"):
         for dim in dim_keys:
             values = [
                 bucket[dim]
@@ -715,6 +803,7 @@ def recompute_daily_tiers(conn: sqlite3.Connection, min_nonzero_days: int) -> No
     conn.execute("DELETE FROM daily_tiers")
 
     for (day, category), bucket in by_dc.items():
+        tier_commits = banders[(category, "n_commits")](bucket["n_commits"])
         tier_commits_personal = banders[(category, "n_commits_personal")](
             bucket["n_commits_personal"]
         )
@@ -749,37 +838,50 @@ def recompute_daily_tiers(conn: sqlite3.Connection, min_nonzero_days: int) -> No
         # days from light days without an extra promotion step.
         tier_telegram_msgs = _apply_discount(tier_telegram_msgs, "n_telegram_msgs")
 
-        per_dim_tiers = (
-            tier_commits_personal, tier_commits_bot,
-            tier_committed_files, tier_committed_loc_effort,
-            tier_uncommitted_files, tier_uncommitted_loc_effort,
-            tier_lens_review, tier_lens_discussion, tier_telegram_msgs,
-        )
+        # Overall-tier composition differs by category. SeedSigner keeps the
+        # personal/bot split — manual fork pushes vs autonomous bot work get
+        # weighted differently. Tools and Other don't have personal-fork
+        # commits in practice, so the split adds a perpetually-empty
+        # dimension; instead they ride on the merged n_commits tier.
+        if category == "seedsigner":
+            per_dim_tiers = (
+                tier_commits_personal, tier_commits_bot,
+                tier_committed_files, tier_committed_loc_effort,
+                tier_uncommitted_files, tier_uncommitted_loc_effort,
+                tier_lens_review, tier_lens_discussion, tier_telegram_msgs,
+            )
+        else:
+            per_dim_tiers = (
+                tier_commits,
+                tier_committed_files, tier_committed_loc_effort,
+                tier_uncommitted_files, tier_uncommitted_loc_effort,
+                tier_lens_review, tier_lens_discussion, tier_telegram_msgs,
+            )
         overall_tier = max(per_dim_tiers, key=lambda t: TIER_RANK[t])
 
         conn.execute(
             """
             INSERT INTO daily_tiers(
                 day, category,
-                n_commits_personal, n_commits_bot,
+                n_commits, n_commits_personal, n_commits_bot,
                 n_committed_files, n_committed_loc_effort,
                 n_uncommitted_files, n_uncommitted_loc_effort,
                 n_lens_review, n_lens_discussion, n_telegram_msgs,
-                tier_commits_personal, tier_commits_bot,
+                tier_commits, tier_commits_personal, tier_commits_bot,
                 tier_committed_files, tier_committed_loc_effort,
                 tier_uncommitted_files, tier_uncommitted_loc_effort,
                 tier_lens_review, tier_lens_discussion, tier_telegram_msgs,
                 overall_tier
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 day, category,
-                bucket["n_commits_personal"], bucket["n_commits_bot"],
+                bucket["n_commits"], bucket["n_commits_personal"], bucket["n_commits_bot"],
                 bucket["n_committed_files"], bucket["n_committed_loc_effort"],
                 bucket["n_uncommitted_files"], bucket["n_uncommitted_loc_effort"],
                 bucket["n_lens_review"], bucket["n_lens_discussion"],
                 bucket["n_telegram_msgs"],
-                tier_commits_personal, tier_commits_bot,
+                tier_commits, tier_commits_personal, tier_commits_bot,
                 tier_committed_files, tier_committed_loc_effort,
                 tier_uncommitted_files, tier_uncommitted_loc_effort,
                 tier_lens_review, tier_lens_discussion, tier_telegram_msgs,

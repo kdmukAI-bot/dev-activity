@@ -4,6 +4,12 @@ notification_policy = "never"
 # Where to look for local git working trees (top-level .git only; no deep recursion).
 scan_roots = ["/home/kdmukai/dev"]
 
+# Repos discovered under any of these directory roots are classified as
+# "other" (personal projects). Anything not matching this AND not in
+# seedsigner_repos defaults to "tools". Path is matched as a directory-
+# component prefix; tilde expansion is honored.
+other_dirs = ["~/dev/misc"]
+
 # Author identities to credit for local-tree commits. Substring-matched against
 # git author name/email (so "kdmukAI-bot" or your personal email both work).
 git_author_substrings = [
@@ -47,6 +53,7 @@ personal_forks = [
   "kdmukai/seedsigner-c-modules",
   "kdmukai/seedsigner-micropython-builder",
   "kdmukai/seedsigner-raspi-lvgl",
+  "kdmukai/embit",
 ]
 
 # Cache for bare clones of personal forks.

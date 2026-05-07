@@ -40,17 +40,22 @@ def _safe_int(v: Any) -> int:
         return 0
 
 
-def _seedsigner_share(ss_tier: str, ot_tier: str) -> float:
-    # Width fraction allocated to the seedsigner half on a split-day cell.
-    # Uses TIER_RANK so matched tiers (low+low, moderate+moderate) stay 50/50,
-    # while a heavy/light pairing (high vs trace → 4/(4+1)=0.8) leans visibly
-    # toward the louder side. Falls back to 0.5 if both sides are 'none'
-    # (the split-cell branch shouldn't fire in that case anyway).
+def _category_shares(ss_tier: str, tl_tier: str, ot_tier: str) -> dict[str, float]:
+    # Width fractions for the three split-cell stripes. Uses TIER_RANK so
+    # matched tiers stay even, while heavy/light pairings lean visibly toward
+    # the louder side. If all three tiers are 'none' the cell shouldn't be
+    # rendered as a split anyway; we return an even split as a safe default.
     rs = TIER_RANK.get(ss_tier, 0)
+    rt = TIER_RANK.get(tl_tier, 0)
     ro = TIER_RANK.get(ot_tier, 0)
-    if rs == 0 and ro == 0:
-        return 0.5
-    return rs / (rs + ro)
+    total = rs + rt + ro
+    if total == 0:
+        return {"seedsigner": 1 / 3, "tools": 1 / 3, "other": 1 / 3}
+    return {
+        "seedsigner": rs / total,
+        "tools": rt / total,
+        "other": ro / total,
+    }
 
 
 def _max_tier(*tiers: str | None) -> str:
@@ -67,17 +72,34 @@ def _max_tier(*tiers: str | None) -> str:
 
 
 def _enrich_with_share(rows: list[dict]) -> None:
-    """In place: stamp `seedsigner_share` on both rows of any split day."""
+    """In place: stamp `ss_share`, `tl_share`, `ot_share` on each row of a
+    multi-category day. Only fires when at least two categories are non-none
+    (single-category days don't get a split rendering)."""
     by_day: dict[str, dict[str, dict]] = {}
     for r in rows:
         by_day.setdefault(r["day"], {})[r["category"]] = r
     for day_rows in by_day.values():
         ss = day_rows.get("seedsigner")
+        tl = day_rows.get("tools")
         ot = day_rows.get("other")
-        if ss and ot and ss.get("overall_tier") != "none" and ot.get("overall_tier") != "none":
-            share = _seedsigner_share(ss["overall_tier"], ot["overall_tier"])
-            ss["seedsigner_share"] = share
-            ot["seedsigner_share"] = share
+        nonzero = sum(
+            1
+            for r in (ss, tl, ot)
+            if r and r.get("overall_tier") != "none"
+        )
+        if nonzero < 2:
+            continue
+        shares = _category_shares(
+            ss["overall_tier"] if ss else "none",
+            tl["overall_tier"] if tl else "none",
+            ot["overall_tier"] if ot else "none",
+        )
+        for r in (ss, tl, ot):
+            if r is None:
+                continue
+            r["ss_share"] = shares["seedsigner"]
+            r["tl_share"] = shares["tools"]
+            r["ot_share"] = shares["other"]
 
 
 class Analyzer:
@@ -117,10 +139,14 @@ class Analyzer:
                 if row["day"] == today
             }
             ss = today_rows.get("seedsigner")
+            tl = today_rows.get("tools")
             ot = today_rows.get("other")
             ss_tier = ss["overall_tier"] if ss else "none"
+            tl_tier = tl["overall_tier"] if tl else "none"
             ot_tier = ot["overall_tier"] if ot else "none"
-            summary = f"today: SeedSigner {ss_tier} / other {ot_tier}"
+            summary = (
+                f"today: SeedSigner {ss_tier} / tools {tl_tier} / other {ot_tier}"
+            )
             detail = None
             status = Status.WARNING if stale else Status.OK
             if stale:
@@ -178,10 +204,12 @@ class Analyzer:
                 for row in conn.execute(
                     """
                     SELECT day, category, overall_tier,
-                           n_commits_personal, n_commits_bot, n_committed_files, n_committed_loc_effort,
+                           n_commits, n_commits_personal, n_commits_bot,
+                           n_committed_files, n_committed_loc_effort,
                            n_uncommitted_files, n_uncommitted_loc_effort,
                            n_lens_review, n_lens_discussion, n_telegram_msgs,
-                           tier_commits_personal, tier_commits_bot, tier_committed_files, tier_committed_loc_effort,
+                           tier_commits, tier_commits_personal, tier_commits_bot,
+                           tier_committed_files, tier_committed_loc_effort,
                            tier_uncommitted_files, tier_uncommitted_loc_effort,
                            tier_lens_review, tier_lens_discussion, tier_telegram_msgs
                     FROM daily_tiers
@@ -198,7 +226,8 @@ class Analyzer:
                 for row in conn.execute(
                     """
                     SELECT day, category, overall_tier,
-                           n_commits_personal, n_commits_bot, n_committed_files, n_committed_loc_effort,
+                           n_commits, n_commits_personal, n_commits_bot,
+                           n_committed_files, n_committed_loc_effort,
                            n_uncommitted_files, n_uncommitted_loc_effort,
                            n_lens_review, n_lens_discussion, n_telegram_msgs
                     FROM daily_tiers
@@ -270,7 +299,11 @@ class Analyzer:
                      AND o.message = r.message
                      AND o.author_name = r.author_name
                     WHERE r.rn = 1
-                    ORDER BY CASE r.category WHEN 'seedsigner' THEN 0 ELSE 1 END,
+                    ORDER BY CASE r.category
+                                WHEN 'seedsigner' THEN 0
+                                WHEN 'tools' THEN 1
+                                ELSE 2
+                             END,
                              r.project_name, r.author_iso DESC
                     """,
                     (day,),
@@ -285,7 +318,11 @@ class Analyzer:
                     FROM file_touches ft
                     JOIN projects p ON p.id = ft.project_id
                     WHERE ft.day = ?
-                    ORDER BY CASE p.category WHEN 'seedsigner' THEN 0 ELSE 1 END,
+                    ORDER BY CASE p.category
+                                WHEN 'seedsigner' THEN 0
+                                WHEN 'tools' THEN 1
+                                ELSE 2
+                             END,
                              p.name, ft.file_path
                     """,
                     (day,),
@@ -329,18 +366,17 @@ class Analyzer:
             # lens activity, telegram). Each section uses the max-rank across
             # the dimensions that contribute to it, so a section's label
             # reflects however that section's loudest signal landed in banding.
-            ss_tier = "none"
-            ot_tier = "none"
+            tiers_by_cat = {"seedsigner": "none", "tools": "none", "other": "none"}
             section_tiers = {
-                "commits":     {"seedsigner": "none", "other": "none"},
-                "uncommitted": {"seedsigner": "none", "other": "none"},
-                "lens":        {"seedsigner": "none", "other": "none"},
+                "commits":     {"seedsigner": "none", "tools": "none", "other": "none"},
+                "uncommitted": {"seedsigner": "none", "tools": "none", "other": "none"},
+                "lens":        {"seedsigner": "none", "tools": "none", "other": "none"},
                 "telegram":    {"seedsigner": "none"},
             }
             for r in conn.execute(
                 """
                 SELECT category, overall_tier,
-                       tier_commits_personal, tier_commits_bot,
+                       tier_commits, tier_commits_personal, tier_commits_bot,
                        tier_committed_files, tier_committed_loc_effort,
                        tier_uncommitted_files, tier_uncommitted_loc_effort,
                        tier_lens_review, tier_lens_discussion, tier_telegram_msgs
@@ -349,16 +385,19 @@ class Analyzer:
                 (day,),
             ):
                 cat = r["category"]
-                if cat == "seedsigner":
-                    ss_tier = r["overall_tier"]
-                elif cat == "other":
-                    ot_tier = r["overall_tier"]
-                else:
+                if cat not in tiers_by_cat:
                     continue
-                section_tiers["commits"][cat] = _max_tier(
-                    r["tier_commits_personal"], r["tier_commits_bot"],
-                    r["tier_committed_files"], r["tier_committed_loc_effort"],
-                )
+                tiers_by_cat[cat] = r["overall_tier"]
+                if cat == "seedsigner":
+                    section_tiers["commits"][cat] = _max_tier(
+                        r["tier_commits_personal"], r["tier_commits_bot"],
+                        r["tier_committed_files"], r["tier_committed_loc_effort"],
+                    )
+                else:
+                    section_tiers["commits"][cat] = _max_tier(
+                        r["tier_commits"],
+                        r["tier_committed_files"], r["tier_committed_loc_effort"],
+                    )
                 section_tiers["uncommitted"][cat] = _max_tier(
                     r["tier_uncommitted_files"], r["tier_uncommitted_loc_effort"],
                 )
@@ -367,16 +406,23 @@ class Analyzer:
                 )
                 if cat == "seedsigner":
                     section_tiers["telegram"]["seedsigner"] = r["tier_telegram_msgs"] or "none"
-            seedsigner_share = _seedsigner_share(ss_tier, ot_tier)
+            shares = _category_shares(
+                tiers_by_cat["seedsigner"],
+                tiers_by_cat["tools"],
+                tiers_by_cat["other"],
+            )
             return {
                 "day": day,
                 "commits": commits,
                 "file_touches": file_touches,
                 "lens_events": lens_events,
                 "telegram_msgs": telegram_msgs,
-                "ss_tier": ss_tier,
-                "ot_tier": ot_tier,
-                "seedsigner_share": seedsigner_share,
+                "ss_tier": tiers_by_cat["seedsigner"],
+                "tl_tier": tiers_by_cat["tools"],
+                "ot_tier": tiers_by_cat["other"],
+                "ss_share": shares["seedsigner"],
+                "tl_share": shares["tools"],
+                "ot_share": shares["other"],
                 "section_tiers": section_tiers,
             }
 
@@ -391,7 +437,8 @@ class Analyzer:
                 for row in conn.execute(
                     """
                     SELECT day, category, overall_tier,
-                           n_commits_personal, n_commits_bot, n_committed_files, n_committed_loc_effort,
+                           n_commits, n_commits_personal, n_commits_bot,
+                           n_committed_files, n_committed_loc_effort,
                            n_uncommitted_files, n_uncommitted_loc_effort,
                            n_lens_review, n_lens_discussion, n_telegram_msgs
                     FROM daily_tiers
