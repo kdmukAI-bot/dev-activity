@@ -16,7 +16,7 @@ from personal_dashboard.core.result import ModuleResult, Status
 
 from . import storage
 from .scanner import load_config, run_scan
-from .storage import TIER_RANK
+from .storage import TIER_RANK, lens_repo_category
 
 logger = logging.getLogger(__name__)
 
@@ -291,31 +291,33 @@ class Analyzer:
                     (day,),
                 )
             ]
-            lens_events = [
-                dict(r)
-                for r in conn.execute(
-                    """
-                    SELECT repo, number, title,
-                           COUNT(*) AS total_events,
-                           SUM(CASE WHEN kind='pr_review_comment' THEN 1 ELSE 0 END)
-                               AS n_review_comments,
-                           SUM(CASE WHEN kind='pr_comment' THEN 1 ELSE 0 END)
-                               AS n_pr_comments,
-                           SUM(CASE WHEN kind='issue_comment' THEN 1 ELSE 0 END)
-                               AS n_issue_comments,
-                           SUM(CASE WHEN kind='pr_open' THEN 1 ELSE 0 END)
-                               AS n_pr_opens,
-                           SUM(CASE WHEN kind='issue_open' THEN 1 ELSE 0 END)
-                               AS n_issue_opens,
-                           MAX(ts_iso) AS latest_ts
-                    FROM lens_events
-                    WHERE day = ?
-                    GROUP BY repo, number
-                    ORDER BY latest_ts DESC
-                    """,
-                    (day,),
-                )
-            ]
+            ss_repos = self._config.get("seedsigner_repos") or []
+            lens_events = []
+            for r in conn.execute(
+                """
+                SELECT repo, number, title,
+                       COUNT(*) AS total_events,
+                       SUM(CASE WHEN kind='pr_review_comment' THEN 1 ELSE 0 END)
+                           AS n_review_comments,
+                       SUM(CASE WHEN kind='pr_comment' THEN 1 ELSE 0 END)
+                           AS n_pr_comments,
+                       SUM(CASE WHEN kind='issue_comment' THEN 1 ELSE 0 END)
+                           AS n_issue_comments,
+                       SUM(CASE WHEN kind='pr_open' THEN 1 ELSE 0 END)
+                           AS n_pr_opens,
+                       SUM(CASE WHEN kind='issue_open' THEN 1 ELSE 0 END)
+                           AS n_issue_opens,
+                       MAX(ts_iso) AS latest_ts
+                FROM lens_events
+                WHERE day = ?
+                GROUP BY repo, number
+                ORDER BY latest_ts DESC
+                """,
+                (day,),
+            ):
+                row = dict(r)
+                row["category"] = lens_repo_category(row["repo"], ss_repos)
+                lens_events.append(row)
             telegram_total = conn.execute(
                 "SELECT COALESCE(SUM(msg_count), 0) AS n FROM telegram_activity WHERE day = ?",
                 (day,),
@@ -446,10 +448,17 @@ class Analyzer:
 
         async def heatmap_json_handler(request: Request) -> JSONResponse:
             rows = await asyncio.to_thread(analyzer._read_year_for_json)
-            return JSONResponse(rows)
+            # Browsers will heuristically cache JSON without an explicit
+            # cache-control header, so a long-lived dashboard tab keeps
+            # repainting yesterday's heatmap even after the htmx widget swap
+            # successfully refires. Force-revalidate every request.
+            return JSONResponse(
+                rows,
+                headers={"Cache-Control": "no-store, max-age=0"},
+            )
 
         return [
-            RouteSpec(path="/run-now", handler=run_now_handler, method="POST", auth="bearer"),
+            RouteSpec(path="/run-now", handler=run_now_handler, method="POST", auth=None),
             RouteSpec(path="/day/{date}", handler=day_handler, method="GET"),
             RouteSpec(path="/heatmap.json", handler=heatmap_json_handler, method="GET"),
         ]

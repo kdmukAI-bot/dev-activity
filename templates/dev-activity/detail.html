@@ -79,12 +79,23 @@
     <p class="pd-empty">Click a day to see its breakdown.</p>
   </div>
 
-  {% if data.last_scan_at %}
   <p class="pd-devact-footer">
+    {% if data.last_scan_at %}
     Last scan
     <time datetime="{{ data.last_scan_at }}" title="{{ data.last_scan_at }}">{{ data.last_scan_at | time_ago }}</time>.
+    {% else %}
+    No scan recorded yet.
+    {% endif %}
+    <button type="button"
+            class="pd-devact-rescan-btn"
+            hx-post="/modules/dev-activity/run-now"
+            hx-swap="none"
+            hx-disabled-elt="this"
+            hx-on::before-request="this.dataset.label = this.textContent; this.textContent = 'Rescanning…';"
+            hx-on::after-request="if (event.detail.successful) { location.reload(); } else { this.disabled = false; this.textContent = (this.dataset.label || 'Rescan now') + ' — retry'; }">
+      Rescan now
+    </button>
   </p>
-  {% endif %}
 
 </section>
 

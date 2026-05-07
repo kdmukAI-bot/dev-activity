@@ -135,7 +135,7 @@ WAL mode is enabled so the dashboard can read while the scanner writes.
 | `/modules/dev-activity/` | GET | Detail page with full-year heatmap. Accepts `?day=YYYY-MM-DD` to pre-load one day's breakdown. |
 | `/modules/dev-activity/widget` | GET | Compact widget HTML (full-year heatmap, right-anchored and clipped to fit the card). |
 | `/modules/dev-activity/data` | GET | Raw `get_data()` payload as JSON. |
-| `/modules/dev-activity/run-now` | POST (bearer) | Trigger a scan synchronously. |
+| `/modules/dev-activity/run-now` | POST | Trigger a scan synchronously. Used by the detail-page "Rescan now" button. |
 | `/modules/dev-activity/day/{YYYY-MM-DD}` | GET | HTML fragment with one day's breakdown (htmx). |
 | `/modules/dev-activity/heatmap.json` | GET | Year of `[date, category, overall_tier, ...]` rows for the SVG client. |
 

@@ -161,6 +161,19 @@
   margin-top: 2.5em;
   font-size: 0.84em;
   color: var(--pd-muted, #888);
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  flex-wrap: wrap;
+}
+.pd-devact-rescan-btn {
+  font-size: 0.95em;
+  padding: 0.25em 0.7em;
+  cursor: pointer;
+}
+.pd-devact-rescan-btn[disabled] {
+  cursor: progress;
+  opacity: 0.7;
 }
 .pd-devact-empty {
   color: var(--pd-muted, #888);
