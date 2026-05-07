@@ -316,23 +316,32 @@ def scan_uncommitted(
     if status.returncode != 0:
         return out
 
+    # In a fresh repo with no commits yet there is no HEAD, so `git diff HEAD`
+    # errors out and we'd otherwise drop every staged file as loc_effort=0.
+    # Treat that case like everything is untracked (count full line counts).
+    has_head = subprocess.run(
+        ["git", "-C", str(repo_path), "rev-parse", "--verify", "HEAD"],
+        capture_output=True, check=False, timeout=10,
+    ).returncode == 0
+
     # Build numstat map for tracked-modified files vs HEAD.
     diff_map: dict[str, tuple[int, int]] = {}
-    try:
-        diff = subprocess.run(
-            ["git", "-C", str(repo_path), "diff", "HEAD", "--numstat"],
-            capture_output=True, text=True, check=False, timeout=120,
-        )
-    except subprocess.TimeoutExpired:
-        diff = None
-    if diff is not None and diff.returncode == 0:
-        for line in diff.stdout.splitlines():
-            parts = line.split("\t")
-            if len(parts) >= 3:
-                ins = _parse_numstat_value(parts[0])
-                dele = _parse_numstat_value(parts[1])
-                path = "\t".join(parts[2:])
-                diff_map[path] = (ins, dele)
+    if has_head:
+        try:
+            diff = subprocess.run(
+                ["git", "-C", str(repo_path), "diff", "HEAD", "--numstat"],
+                capture_output=True, text=True, check=False, timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            diff = None
+        if diff is not None and diff.returncode == 0:
+            for line in diff.stdout.splitlines():
+                parts = line.split("\t")
+                if len(parts) >= 3:
+                    ins = _parse_numstat_value(parts[0])
+                    dele = _parse_numstat_value(parts[1])
+                    path = "\t".join(parts[2:])
+                    diff_map[path] = (ins, dele)
 
     for line in status.stdout.splitlines():
         if len(line) < 4:
@@ -366,7 +375,7 @@ def scan_uncommitted(
         if _is_excluded_file(path) or _path_in_excluded_dir(path):
             continue
 
-        is_untracked = xy.startswith("??")
+        is_untracked = xy.startswith("??") or not has_head
         if is_untracked:
             try:
                 # Quick line count; binary safe-ish — count newlines.
