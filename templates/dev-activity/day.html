@@ -139,7 +139,20 @@
     </p>
   {% endif %}
 
-  {% if not (d.commits or d.file_touches or d.lens_events or d.telegram_msgs) %}
+  {% if d.new_repos %}
+    {% set new_cats = d.new_repos | map(attribute='category') | list %}
+    <h4>New repo{{ '' if d.new_repos | length == 1 else 's' }} ({{ d.new_repos | length }}) {{ tier_label('ss', 'moderate' if 'seedsigner' in new_cats else 'none') }} {{ tier_label('tl', 'moderate' if 'tools' in new_cats else 'none') }} {{ tier_label('ot', 'moderate' if 'other' in new_cats else 'none') }}</h4>
+    <ul class="pd-devact-day-list">
+      {% for r in d.new_repos %}
+        <li class="pd-devact-day-item pd-devact-cat-{{ r.category }}">
+          <span class="pd-devact-day-project">{{ r.project_name }}</span>
+          <span class="pd-devact-day-stats">{{ r.path }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if not (d.commits or d.file_touches or d.lens_events or d.telegram_msgs or d.new_repos) %}
     <p class="pd-empty">No recorded activity for this day.</p>
   {% endif %}
 </div>

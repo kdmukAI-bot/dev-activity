@@ -17,13 +17,22 @@ from typing import Iterable, Iterator
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
-    id           INTEGER PRIMARY KEY,
-    path         TEXT UNIQUE NOT NULL,
-    name         TEXT NOT NULL,
-    remote_url   TEXT,
-    category     TEXT NOT NULL,
-    source       TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL
+    id                          INTEGER PRIMARY KEY,
+    path                        TEXT UNIQUE NOT NULL,
+    name                        TEXT NOT NULL,
+    remote_url                  TEXT,
+    category                    TEXT NOT NULL,
+    source                      TEXT NOT NULL,
+    last_seen_at                TEXT NOT NULL,
+    -- Local-tz YYYY-MM-DD of the earliest commit across ALL branches and
+    -- ALL authors, computed from FULL git history (no --since). Drives the
+    -- "new repo" floor in recompute_daily_tiers — using MIN(commits.author_date)
+    -- instead would be wrong because the commits table only ingests --since=7d.
+    -- Filtered by author would also be wrong: a personal repo with old
+    -- commits under prior identities (e.g. meetscorer's 2014 history under
+    -- "Keith Mukai" rather than "kdmukai") would falsely register as new.
+    -- NULL for empty repos (no commits at all) and during the migration gap.
+    earliest_commit_date        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS commits (
@@ -217,6 +226,17 @@ def connect(db_path: os.PathLike | str | None = None) -> Iterator[sqlite3.Connec
                 conn.execute("DELETE FROM lens_events")
             except sqlite3.OperationalError:
                 pass
+        # Additive column migrations (older DBs predate these columns).
+        proj_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)")}
+        if proj_cols and "earliest_user_commit_date" in proj_cols:
+            # Old, briefly-shipped column name. Drop and re-add under the new
+            # name; cached values were author-filtered and therefore wrong for
+            # repos with pre-identity history (e.g. meetscorer 2014 under
+            # "Keith Mukai"). The next scan will repopulate the new column.
+            conn.execute("ALTER TABLE projects DROP COLUMN earliest_user_commit_date")
+            proj_cols.discard("earliest_user_commit_date")
+        if proj_cols and "earliest_commit_date" not in proj_cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN earliest_commit_date TEXT")
         conn.executescript(SCHEMA)
         conn.row_factory = sqlite3.Row
         yield conn
@@ -251,19 +271,31 @@ def upsert_project(
     category: str,
     source: str,
     last_seen_at: str,
+    earliest_commit_date: str | None = None,
 ) -> int:
+    # COALESCE on update preserves an existing value when the caller passes
+    # None (e.g. an empty repo with no commits yet) — avoids clobbering a
+    # previously-computed date if a transient git-log call fails.
     conn.execute(
         """
-        INSERT INTO projects(path, name, remote_url, category, source, last_seen_at)
-        VALUES(?, ?, ?, ?, ?, ?)
+        INSERT INTO projects(
+            path, name, remote_url, category, source, last_seen_at,
+            earliest_commit_date
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(path) DO UPDATE SET
             name=excluded.name,
             remote_url=excluded.remote_url,
             category=excluded.category,
             source=excluded.source,
-            last_seen_at=excluded.last_seen_at
+            last_seen_at=excluded.last_seen_at,
+            earliest_commit_date=COALESCE(
+                excluded.earliest_commit_date,
+                projects.earliest_commit_date
+            )
         """,
-        (path, name, remote_url, category, source, last_seen_at),
+        (path, name, remote_url, category, source, last_seen_at,
+         earliest_commit_date),
     )
     row = conn.execute("SELECT id FROM projects WHERE path=?", (path,)).fetchone()
     return int(row["id"])
@@ -758,6 +790,50 @@ def recompute_daily_tiers(
         b = _bucket(row["day"], "seedsigner")
         b["n_telegram_msgs"] = int(row["n"])
 
+    # "New repo" floor: a project's earliest data-day (earliest user-authored
+    # commit in the repo, or — for empty repos with no commits yet —
+    # earliest file_touch) marks the day that project entered active dev work.
+    # Floor that (day, category) to overall_tier >= "moderate" so a brand-new
+    # repo always reads as a moderate-activity day for its category, even when
+    # LoC/file counts haven't yet hit the banded threshold.
+    #
+    # The earliest commit comes from `projects.earliest_commit_date`, which
+    # the scanners populate from FULL git history (no --since, no --author).
+    # MIN(commits.author_date) would be wrong: the commits table only ingests
+    # --since=<7d>, so a long-history repo we just added to our watch list
+    # would falsely report its earliest commit as "today" and trigger a bump.
+    # Author-filtered earliest is also wrong: a personal repo with old
+    # commits under prior identities (e.g. meetscorer's 2014 commits under
+    # "Keith Mukai" rather than "kdmukai") would slip through the filter and
+    # the repo would still register as new.
+    #
+    # Constrained to days >= first_scan_at: pre-scanning history is full of
+    # legitimate "earliest" dates from years past (when the user first
+    # contributed to long-standing repos), and we don't want to retroactively
+    # paint moderate cells across the historical heatmap.
+    new_repo_day_cats: set[tuple[str, str]] = set()
+    first_scan_day = (first_scan_at or "")[:10]
+    cur = conn.execute(
+        """
+        SELECT p.category AS category,
+               COALESCE(
+                   p.earliest_commit_date,
+                   (SELECT MIN(day) FROM file_touches WHERE project_id = p.id)
+               ) AS earliest_day
+        FROM projects p
+        """
+    )
+    for row in cur:
+        eday = row["earliest_day"]
+        if not eday:
+            continue
+        if first_scan_day and eday < first_scan_day:
+            continue
+        new_repo_day_cats.add((eday, row["category"]))
+        # Ensure a bucket exists so a daily_tiers row gets written even if no
+        # other activity contributed to this (day, category).
+        _bucket(eday, row["category"])
+
     # Build per (category, dimension) banders from the historical distribution.
     dim_keys = (
         "n_commits",
@@ -858,6 +934,10 @@ def recompute_daily_tiers(
                 tier_lens_review, tier_lens_discussion, tier_telegram_msgs,
             )
         overall_tier = max(per_dim_tiers, key=lambda t: TIER_RANK[t])
+        # New-repo floor: any (day, category) where a project's earliest
+        # commit / file_touch landed reads at least "moderate".
+        if (day, category) in new_repo_day_cats and TIER_RANK[overall_tier] < TIER_RANK["moderate"]:
+            overall_tier = "moderate"
 
         conn.execute(
             """

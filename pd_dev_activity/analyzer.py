@@ -361,6 +361,32 @@ class Analyzer:
             ).fetchone()
             telegram_msgs = int(telegram_total["n"]) if telegram_total else 0
 
+            # Projects whose earliest data-day (first user commit OR first
+            # file_touch) is this day. Mirrors the "new repo" floor logic in
+            # storage.recompute_daily_tiers — surfaced here so the day-detail
+            # view explains why the day reads moderate.
+            new_repos = [
+                dict(r)
+                for r in conn.execute(
+                    """
+                    SELECT p.name AS project_name, p.category, p.path
+                    FROM projects p
+                    WHERE COALESCE(
+                              p.earliest_commit_date,
+                              (SELECT MIN(day) FROM file_touches
+                                 WHERE project_id = p.id)
+                          ) = ?
+                    ORDER BY CASE p.category
+                                WHEN 'seedsigner' THEN 0
+                                WHEN 'tools' THEN 1
+                                ELSE 2
+                             END,
+                             p.name
+                    """,
+                    (day,),
+                )
+            ]
+
             # Per-section tiers per category. The day-detail template renders
             # these next to each section heading (commits, uncommitted touches,
             # lens activity, telegram). Each section uses the max-rank across
@@ -417,6 +443,7 @@ class Analyzer:
                 "file_touches": file_touches,
                 "lens_events": lens_events,
                 "telegram_msgs": telegram_msgs,
+                "new_repos": new_repos,
                 "ss_tier": tiers_by_cat["seedsigner"],
                 "tl_tier": tiers_by_cat["tools"],
                 "ot_tier": tiers_by_cat["other"],

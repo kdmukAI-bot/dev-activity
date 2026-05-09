@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .. import storage
-from .local_trees import parse_git_log, run_git_log
+from .local_trees import find_earliest_commit_date, parse_git_log, run_git_log
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +120,7 @@ def scan_personal_fork(
     repo_basename = owner_repo.split("/", 1)[1]
     category = "seedsigner" if repo_basename in seedsigner_repos else "tools"
     remote_url = f"https://github.com/{owner_repo}.git"
+    earliest_commit = find_earliest_commit_date(cache_path)
     project_id = storage.upsert_project(
         conn,
         path=str(cache_path),
@@ -128,6 +129,7 @@ def scan_personal_fork(
         category=category,
         source="personal_fork",
         last_seen_at=now_iso,
+        earliest_commit_date=earliest_commit,
     )
 
     raw = run_git_log(cache_path, since=since)

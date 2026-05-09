@@ -250,6 +250,44 @@ def parse_git_log(
     return [c for c in commits if c.files]
 
 
+def find_earliest_commit_date(repo_path: Path) -> str | None:
+    """Local-tz YYYY-MM-DD of the earliest commit across ALL branches and
+    ALL authors (no --since, no --author filter). Drives the "new repo"
+    floor in recompute_daily_tiers: a repo with any commit older than
+    first_scan_at is by definition not a new repo, regardless of whether
+    the user authored those old commits. Filtering by current author
+    identities (git_author_substrings / github_logins) misses long-lived
+    personal repos with old commits under prior identities — e.g.
+    meetscorer's 2014 history under 'Keith Mukai' rather than 'kdmukai'.
+    Returns None for empty repos (no commits) or on git failure.
+
+    NOTE: do NOT use `git log --reverse -1`. Git applies `-1` BEFORE the
+    reverse, so that combination returns the newest commit. We need the
+    full %at stream and the min value.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_path), "log", "--all", "--pretty=format:%at"],
+            capture_output=True, text=True, check=False, timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("earliest-commit lookup timed out for %s", repo_path)
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    earliest_ts: int | None = None
+    for line in proc.stdout.splitlines():
+        try:
+            ts = int(line)
+        except ValueError:
+            continue
+        if earliest_ts is None or ts < earliest_ts:
+            earliest_ts = ts
+    if earliest_ts is None:
+        return None
+    return datetime.fromtimestamp(earliest_ts).date().isoformat()
+
+
 def run_git_log(
     repo_path: Path,
     *,
@@ -420,6 +458,7 @@ def scan_local_tree(
         other_dirs=other_dirs,
     )
     remote_url = repo_remote_url(repo_path)
+    earliest_commit = find_earliest_commit_date(repo_path)
     project_id = storage.upsert_project(
         conn,
         path=str(repo_path),
@@ -428,6 +467,7 @@ def scan_local_tree(
         category=category,
         source="local_tree",
         last_seen_at=now_iso,
+        earliest_commit_date=earliest_commit,
     )
 
     raw = run_git_log(repo_path, since=since)
