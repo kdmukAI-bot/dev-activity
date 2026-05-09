@@ -446,6 +446,7 @@ def scan_local_tree(
     *,
     seedsigner_repos: set[str],
     other_dirs: list[str],
+    other_repos: set[str] | None = None,
     git_author_substrings: list[str],
     since: str | None,
     now_iso: str,
@@ -456,6 +457,7 @@ def scan_local_tree(
         name,
         seedsigner_repos=seedsigner_repos,
         other_dirs=other_dirs,
+        other_repos=other_repos or set(),
     )
     remote_url = repo_remote_url(repo_path)
     earliest_commit = find_earliest_commit_date(repo_path)

@@ -329,6 +329,7 @@ class Analyzer:
                 )
             ]
             ss_repos = self._config.get("seedsigner_repos") or []
+            other_repos = self._config.get("other_repos") or []
             lens_events = []
             for r in conn.execute(
                 """
@@ -353,7 +354,7 @@ class Analyzer:
                 (day,),
             ):
                 row = dict(r)
-                row["category"] = lens_repo_category(row["repo"], ss_repos)
+                row["category"] = lens_repo_category(row["repo"], ss_repos, other_repos)
                 lens_events.append(row)
             telegram_total = conn.execute(
                 "SELECT COALESCE(SUM(msg_count), 0) AS n FROM telegram_activity WHERE day = ?",

@@ -10,6 +10,13 @@ scan_roots = ["/home/kdmukai/dev"]
 # component prefix; tilde expansion is honored.
 other_dirs = ["~/dev/misc"]
 
+# Repo basenames classified as "other" personal-project work regardless of
+# location. Useful for personal_forks (which have no local path) and for
+# repos cloned outside the other_dirs roots. Takes precedence over
+# other_dirs and over the default "tools" fallback; loses to seedsigner_repos
+# (a basename in BOTH ends up "seedsigner").
+other_repos = []
+
 # Author identities to credit for local-tree commits. Substring-matched against
 # git author name/email (so "kdmukAI-bot" or your personal email both work).
 git_author_substrings = [

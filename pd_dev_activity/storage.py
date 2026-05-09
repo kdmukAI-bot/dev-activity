@@ -540,16 +540,21 @@ def classify_local_repo(
     *,
     seedsigner_repos: Iterable[str],
     other_dirs: Iterable[str],
+    other_repos: Iterable[str] = (),
 ) -> str:
     """Classify a local-tree repo as 'seedsigner', 'other', or 'tools'.
 
-    Order matters: seedsigner_repos by name takes precedence over directory
-    placement (so e.g. ~/dev/tools/project-lens stays 'seedsigner'). Path
+    Order matters: seedsigner_repos by name takes precedence over everything
+    (so e.g. ~/dev/tools/project-lens stays 'seedsigner'). other_repos by
+    name beats directory placement (so a personal-project basename listed
+    in config maps to 'other' even when cloned outside other_dirs). Path
     matching uses directory-component containment via Path.is_relative_to,
     so '~/dev/misc' won't false-match '~/dev/misc-anything-else'.
     """
     if name in set(seedsigner_repos or []):
         return "seedsigner"
+    if name in set(other_repos or []):
+        return "other"
     try:
         repo_resolved = repo_path.resolve()
     except OSError:
@@ -567,8 +572,13 @@ def classify_local_repo(
     return "tools"
 
 
-def lens_repo_category(repo: str, seedsigner_repos: Iterable[str]) -> str:
-    """Classify a lens event's `owner/repo` string into 'seedsigner' or 'tools'.
+def lens_repo_category(
+    repo: str,
+    seedsigner_repos: Iterable[str],
+    other_repos: Iterable[str] = (),
+) -> str:
+    """Classify a lens event's `owner/repo` string into 'seedsigner', 'other',
+    or 'tools'.
 
     Two conditions promote a repo to 'seedsigner':
       - it lives under the SeedSigner GitHub org (any repo there is by
@@ -577,10 +587,9 @@ def lens_repo_category(repo: str, seedsigner_repos: Iterable[str]) -> str:
         user treats as SeedSigner work — e.g. the upstream `embit` library
         under `diybitcoinhardware/embit`).
 
-    Lens events come without local paths, so we can't apply directory-based
-    'other' classification — anything non-seedsigner falls through to 'tools'.
-    Project-lens is a SeedSigner-engagement DB so personal-project lens events
-    aren't expected anyway.
+    Basename in `other_repos` promotes to 'other'. Lens events come without
+    local paths, so directory-based 'other' classification doesn't apply
+    here — basename matching is the only signal.
     """
     if not repo:
         return "tools"
@@ -589,6 +598,8 @@ def lens_repo_category(repo: str, seedsigner_repos: Iterable[str]) -> str:
     basename = repo.split("/", 1)[-1]
     if basename in set(seedsigner_repos or []):
         return "seedsigner"
+    if basename in set(other_repos or []):
+        return "other"
     return "tools"
 
 
@@ -596,12 +607,14 @@ def recompute_daily_tiers(
     conn: sqlite3.Connection,
     min_nonzero_days: int,
     seedsigner_repos: Iterable[str] | None = None,
+    other_repos: Iterable[str] | None = None,
 ) -> None:
     """Truncate daily_tiers and rebuild from raw tables.
 
     Per the plan: tiers shift as the distribution grows; full rebuild every scan.
     """
     ss_repos_list = sorted(set(seedsigner_repos or []))
+    other_repos_list = sorted(set(other_repos or []))
     # Aggregate per (day, category) from the three source tables.
     # We build a dict in Python because the joins+grouping are easier to read,
     # and it's all small enough that we don't need pure-SQL gymnastics.
@@ -742,22 +755,32 @@ def recompute_daily_tiers(
     #     deliberate as commenting).
     # Lens repo classification: SeedSigner org always counts as 'seedsigner';
     # additionally, repos whose basename appears in seedsigner_repos count
-    # (e.g. diybitcoinhardware/embit). Mirrors `lens_repo_category()`.
+    # (e.g. diybitcoinhardware/embit). Basenames in other_repos map to 'other'.
+    # Mirrors `lens_repo_category()`.
+    ss_clause = ""
+    other_clause = ""
+    params_list: list = []
     if ss_repos_list:
-        placeholders = ",".join("?" for _ in ss_repos_list)
-        category_case = (
-            "CASE "
-            "WHEN le.repo LIKE 'SeedSigner/%' THEN 'seedsigner' "
-            f"WHEN substr(le.repo, instr(le.repo, '/') + 1) IN ({placeholders}) "
+        ss_placeholders = ",".join("?" for _ in ss_repos_list)
+        ss_clause = (
+            f"WHEN substr(le.repo, instr(le.repo, '/') + 1) IN ({ss_placeholders}) "
             "THEN 'seedsigner' "
-            "ELSE 'tools' END"
         )
-        params: tuple = tuple(ss_repos_list)
-    else:
-        category_case = (
-            "CASE WHEN le.repo LIKE 'SeedSigner/%' THEN 'seedsigner' ELSE 'tools' END"
+        params_list.extend(ss_repos_list)
+    if other_repos_list:
+        other_placeholders = ",".join("?" for _ in other_repos_list)
+        other_clause = (
+            f"WHEN substr(le.repo, instr(le.repo, '/') + 1) IN ({other_placeholders}) "
+            "THEN 'other' "
         )
-        params = ()
+        params_list.extend(other_repos_list)
+    category_case = (
+        "CASE "
+        "WHEN le.repo LIKE 'SeedSigner/%' THEN 'seedsigner' "
+        f"{ss_clause}{other_clause}"
+        "ELSE 'tools' END"
+    )
+    params = tuple(params_list)
     cur = conn.execute(
         f"""
         SELECT le.day AS day,

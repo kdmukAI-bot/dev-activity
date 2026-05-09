@@ -57,7 +57,10 @@ def ensure_bare_clone(forks_cache_dir: Path, owner_repo: str) -> Path | None:
     cache_path = _cache_path_for(forks_cache_dir, owner_repo)
 
     if not cache_path.exists():
-        url = f"https://github.com/{owner_repo}.git"
+        # SSH so private repos work (HTTPS would prompt for credentials in
+        # the non-interactive scanner). The user's gh client is also
+        # SSH-default, so this matches local convention.
+        url = f"git@github.com:{owner_repo}.git"
         logger.info("cloning %s -> %s", url, cache_path)
         try:
             proc = subprocess.run(
@@ -109,6 +112,7 @@ def scan_personal_fork(
     owner_repo: str,
     forks_cache_dir: Path,
     seedsigner_repos: set[str],
+    other_repos: set[str] | None = None,
     github_logins: list[str],
     since: str | None,
     now_iso: str,
@@ -118,7 +122,12 @@ def scan_personal_fork(
         return
 
     repo_basename = owner_repo.split("/", 1)[1]
-    category = "seedsigner" if repo_basename in seedsigner_repos else "tools"
+    if repo_basename in seedsigner_repos:
+        category = "seedsigner"
+    elif repo_basename in (other_repos or set()):
+        category = "other"
+    else:
+        category = "tools"
     remote_url = f"https://github.com/{owner_repo}.git"
     earliest_commit = find_earliest_commit_date(cache_path)
     project_id = storage.upsert_project(

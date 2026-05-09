@@ -57,6 +57,7 @@ def run_scan(config: dict, db_path: Path | None = None) -> dict:
     _ensure_log_dir()
 
     seedsigner_repos = set(config.get("seedsigner_repos") or [])
+    other_repos = set(config.get("other_repos") or [])
     other_dirs = list(config.get("other_dirs") or [])
     git_author_substrings = list(config.get("git_author_substrings") or [])
     github_logins = list(config.get("github_logins") or [])
@@ -117,6 +118,7 @@ def run_scan(config: dict, db_path: Path | None = None) -> dict:
                     repo_path,
                     seedsigner_repos=seedsigner_repos,
                     other_dirs=other_dirs,
+                    other_repos=other_repos,
                     git_author_substrings=git_author_substrings,
                     since=since,
                     now_iso=now_iso,
@@ -133,6 +135,7 @@ def run_scan(config: dict, db_path: Path | None = None) -> dict:
                     owner_repo=owner_repo,
                     forks_cache_dir=forks_cache_dir,
                     seedsigner_repos=seedsigner_repos,
+                    other_repos=other_repos,
                     github_logins=github_logins,
                     since=since,
                     now_iso=now_iso,
@@ -163,7 +166,10 @@ def run_scan(config: dict, db_path: Path | None = None) -> dict:
 
         # 6: recompute daily_tiers
         storage.recompute_daily_tiers(
-            conn, min_nonzero_days, seedsigner_repos=seedsigner_repos
+            conn,
+            min_nonzero_days,
+            seedsigner_repos=seedsigner_repos,
+            other_repos=other_repos,
         )
 
         # 7: meta
