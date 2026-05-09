@@ -27,6 +27,30 @@ def _cache_path_for(forks_cache_dir: Path, owner_repo: str) -> Path:
     return forks_cache_dir / f"{owner}__{repo}.git"
 
 
+_BARE_FETCH_REFSPEC = "+refs/heads/*:refs/heads/*"
+
+
+def _ensure_fetch_refspec(cache_path: Path) -> None:
+    """Ensure the bare clone has a branch-tracking fetch refspec.
+
+    `git clone --bare` does NOT set `remote.origin.fetch` (only `--mirror`
+    does). Without a refspec, `git fetch` updates only FETCH_HEAD and never
+    advances `refs/heads/*`, so branch tips silently freeze at clone time.
+    We avoid `--mirror` because it would also pull `refs/pull/*` etc. — for
+    a personal fork we only care about branches.
+    """
+    existing = subprocess.run(
+        ["git", "-C", str(cache_path), "config", "--get-all", "remote.origin.fetch"],
+        capture_output=True, text=True, check=False, timeout=10,
+    )
+    if existing.returncode == 0 and _BARE_FETCH_REFSPEC in existing.stdout.split():
+        return
+    subprocess.run(
+        ["git", "-C", str(cache_path), "config", "remote.origin.fetch", _BARE_FETCH_REFSPEC],
+        capture_output=True, check=False, timeout=10,
+    )
+
+
 def ensure_bare_clone(forks_cache_dir: Path, owner_repo: str) -> Path | None:
     """Clone if missing, fetch if present. Returns the bare-clone path or None on failure."""
     forks_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -57,10 +81,12 @@ def ensure_bare_clone(forks_cache_dir: Path, owner_repo: str) -> Path | None:
                 except OSError:
                     pass
             return None
+        _ensure_fetch_refspec(cache_path)
     else:
+        _ensure_fetch_refspec(cache_path)
         try:
             proc = subprocess.run(
-                ["git", "-C", str(cache_path), "fetch", "--all", "--prune", "--quiet"],
+                ["git", "-C", str(cache_path), "fetch", "origin", "--prune", "--quiet"],
                 capture_output=True, text=True, check=False,
                 timeout=300,
             )
