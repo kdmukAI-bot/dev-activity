@@ -31,7 +31,7 @@ github_logins = ["kdmukai"]
 # Repo basenames classified as SeedSigner work. Anything else is "other".
 seedsigner_repos = [
   "seedsigner",
-  "seedsigner-c-modules",
+  "seedsigner-lvgl-screens",
   "seedsigner-micropython-builder",
   "seedsigner-raspi-lvgl",
   "esp-board-common",
@@ -57,7 +57,7 @@ telegram_user_ids = []   # e.g. [1724866645]
 # `forks_cache_dir`. Forks that don't exist on GitHub are logged and skipped.
 personal_forks = [
   "kdmukai/seedsigner",
-  "kdmukai/seedsigner-c-modules",
+  "kdmukai/seedsigner-lvgl-screens",
   "kdmukai/seedsigner-micropython-builder",
   "kdmukai/seedsigner-raspi-lvgl",
   "kdmukai/embit",
