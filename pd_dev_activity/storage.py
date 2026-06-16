@@ -534,6 +534,31 @@ def _band_assigner_lens(values: Iterable[int]):
     return assign
 
 
+def _bander_for(category: str, dim: str, values, min_nonzero_days: int):
+    """Dispatch a (value -> tier) bander for one (category, dimension) over the
+    given value window. Centralizes the per-dimension bander choice so the
+    causal replay in recompute_daily_tiers stays in sync with the banders."""
+    if dim == "n_telegram_msgs":
+        return _band_assigner_telegram(values)
+    if dim == "n_lens_discussion":
+        return _band_assigner_lens(values)
+    if dim == "n_commits_personal":
+        return _band_assigner_two_band_q3(values)
+    return _band_assigner(values, min_nonzero_days)
+
+
+def _bander_min_nonzero(dim: str, min_nonzero_days: int) -> int:
+    """Non-zero-day count at which `dim`'s bander leaves its cold-start fallback
+    and starts making real tier distinctions. MUST mirror the `len(nonzero) < N`
+    guard inside the matching _band_assigner* above — the causal replay uses it
+    to find where each dimension's warmup window ends."""
+    if dim == "n_commits_personal":
+        return 4  # _band_assigner_two_band_q3
+    if dim in ("n_lens_discussion", "n_telegram_msgs"):
+        return 3  # _band_assigner_lens / _band_assigner_telegram
+    return min_nonzero_days  # _band_assigner
+
+
 def classify_local_repo(
     repo_path: Path,
     name: str,
@@ -611,7 +636,13 @@ def recompute_daily_tiers(
 ) -> None:
     """Truncate daily_tiers and rebuild from raw tables.
 
-    Per the plan: tiers shift as the distribution grows; full rebuild every scan.
+    Banding is CAUSAL: each day is scored against the distribution of days
+    up to and including itself (per category), so a day's tier reflects how
+    it compared to everything known *up to that point* and never degrades
+    because of future activity. The table is still fully rebuilt every scan
+    (recent days' raw counts keep settling within the scan window), but for
+    any settled day the causal window is fixed, so its tier is stable. See
+    the banding loop below for the warmup-protection and onset-bump details.
     """
     ss_repos_list = sorted(set(seedsigner_repos or []))
     other_repos_list = sorted(set(other_repos or []))
@@ -813,29 +844,26 @@ def recompute_daily_tiers(
         b = _bucket(row["day"], "seedsigner")
         b["n_telegram_msgs"] = int(row["n"])
 
-    # "New repo" floor: a project's earliest data-day (earliest user-authored
-    # commit in the repo, or — for empty repos with no commits yet —
-    # earliest file_touch) marks the day that project entered active dev work.
-    # Floor that (day, category) to overall_tier >= "moderate" so a brand-new
-    # repo always reads as a moderate-activity day for its category, even when
-    # LoC/file counts haven't yet hit the banded threshold.
+    # Onset bump: a project's earliest data-day (earliest commit in the repo,
+    # or — for repos with no commits yet — earliest file_touch) marks the day
+    # the effort began. Starting a brand-new effort is itself significant, so
+    # that (day, category) is floored to overall_tier "high" (applied in the
+    # banding loop below), even when day-one LoC/file counts are modest.
     #
     # The earliest commit comes from `projects.earliest_commit_date`, which
     # the scanners populate from FULL git history (no --since, no --author).
     # MIN(commits.author_date) would be wrong: the commits table only ingests
     # --since=<7d>, so a long-history repo we just added to our watch list
     # would falsely report its earliest commit as "today" and trigger a bump.
-    # Author-filtered earliest is also wrong: a personal repo with old
-    # commits under prior identities (e.g. meetscorer's 2014 commits under
-    # "Keith Mukai" rather than "kdmukai") would slip through the filter and
-    # the repo would still register as new.
     #
-    # Constrained to days >= first_scan_at: pre-scanning history is full of
-    # legitimate "earliest" dates from years past (when the user first
-    # contributed to long-standing repos), and we don't want to retroactively
-    # paint moderate cells across the historical heatmap.
+    # No date gate, and we deliberately do NOT synthesize a bucket for the
+    # onset day. The bump fires only where a real activity bucket already
+    # exists (the composition loop iterates by_dc), which is exactly the set
+    # of repos the user *started* — they committed on day one. Repos the user
+    # merely *joined* (where earliest_commit_date is an upstream author's
+    # commit on a day with no user activity — e.g. SeedSigner 2020, embit
+    # 2020) have no bucket on that day and so produce no spurious "high" cell.
     new_repo_day_cats: set[tuple[str, str]] = set()
-    first_scan_day = (first_scan_at or "")[:10]
     cur = conn.execute(
         """
         SELECT p.category AS category,
@@ -850,14 +878,8 @@ def recompute_daily_tiers(
         eday = row["earliest_day"]
         if not eday:
             continue
-        if first_scan_day and eday < first_scan_day:
-            continue
         new_repo_day_cats.add((eday, row["category"]))
-        # Ensure a bucket exists so a daily_tiers row gets written even if no
-        # other activity contributed to this (day, category).
-        _bucket(eday, row["category"])
 
-    # Build per (category, dimension) banders from the historical distribution.
     dim_keys = (
         "n_commits",
         "n_commits_personal",
@@ -871,123 +893,126 @@ def recompute_daily_tiers(
         "n_telegram_msgs",
     )
 
-    banders: dict[tuple[str, str], any] = {}
-    for category in ("seedsigner", "tools", "other"):
-        for dim in dim_keys:
-            values = [
-                bucket[dim]
-                for (_day, cat), bucket in by_dc.items()
-                if cat == category
-            ]
-            if dim == "n_telegram_msgs":
-                # Custom 3-tier banding (none/low/moderate, no high; noise floor).
-                banders[(category, dim)] = _band_assigner_telegram(values)
-            elif dim == "n_lens_discussion":
-                # 2-tier (none/moderate/high), median split. Substantive
-                # PR/issue conversation is always at least moderate effort.
-                banders[(category, dim)] = _band_assigner_lens(values)
-            elif dim == "n_commits_personal":
-                # 2-tier (none/moderate/high), Q3 split. Any commit pushed to
-                # the user's personal kdmukai forks is intentional public
-                # work — at least moderate. Top quartile of fork-active days
-                # hits 'high'.
-                banders[(category, dim)] = _band_assigner_two_band_q3(values)
-            else:
-                # Standard 4-band for everything else. n_commits_bot tracks
-                # routine kdmukAI-bot / local-tree work and benefits from
-                # the full low / moderate / high spread (a 1-commit day is
-                # genuinely a 'low' day for bot work, unlike fork pushes).
-                banders[(category, dim)] = _band_assigner(values, min_nonzero_days)
-
     conn.execute("DELETE FROM daily_tiers")
 
-    for (day, category), bucket in by_dc.items():
-        tier_commits = banders[(category, "n_commits")](bucket["n_commits"])
-        tier_commits_personal = banders[(category, "n_commits_personal")](
-            bucket["n_commits_personal"]
-        )
-        tier_commits_bot = banders[(category, "n_commits_bot")](
-            bucket["n_commits_bot"]
-        )
-        tier_committed_files = banders[(category, "n_committed_files")](
-            bucket["n_committed_files"]
-        )
-        tier_committed_loc_effort = banders[(category, "n_committed_loc_effort")](
-            bucket["n_committed_loc_effort"]
-        )
-        tier_uncommitted_files = banders[(category, "n_uncommitted_files")](
-            bucket["n_uncommitted_files"]
-        )
-        tier_uncommitted_loc_effort = banders[(category, "n_uncommitted_loc_effort")](
-            bucket["n_uncommitted_loc_effort"]
-        )
-        tier_lens_review = banders[(category, "n_lens_review")](
-            bucket["n_lens_review"]
-        )
-        tier_lens_discussion = banders[(category, "n_lens_discussion")](
-            bucket["n_lens_discussion"]
-        )
-        tier_telegram_msgs = banders[(category, "n_telegram_msgs")](
-            bucket["n_telegram_msgs"]
-        )
-        # Post-banding adjustments. DIMENSION_DISCOUNTS subtracts levels from
-        # a dimension's tier (telegram has its own custom bander now, so it's
-        # not currently in here). The fork-day boost was removed once n_commits
-        # moved to a 2-band Q3 split — Q3 already differentiates fork-heavy
-        # days from light days without an extra promotion step.
-        tier_telegram_msgs = _apply_discount(tier_telegram_msgs, "n_telegram_msgs")
+    # Causal, expanding-window banding with cold-start warmup protection.
+    #
+    # The old behavior banded every day against the FULL per-category
+    # distribution, so a day rated 'high' in an early, sparse month could
+    # silently decay to 'moderate' once later high-volume days (e.g. the 2026
+    # bot era) thickened the distribution. Instead we REPLAY history per
+    # category in chronological order: each day D is scored using only the
+    # distribution of days <= D, so its tier reflects how it compared to
+    # everything known *up to that point* and never degrades because of future
+    # activity. (Recent days' raw counts still settle within the scan window,
+    # so the full rebuild each scan keeps them current; settled days have a
+    # fixed window and therefore a stable tier.)
+    #
+    # Warmup protection: a dimension can't make real distinctions until it has
+    # accumulated `_bander_min_nonzero` non-zero days and leaves its bander's
+    # cold-start fallback. Scoring the earliest days against that flat fallback
+    # would mute a young category/dimension. Instead we score warmup days with
+    # the FIRST window that reaches the threshold: day D uses days <= max(D, D0)
+    # where D0 is the day the dimension first matures. This is a bounded,
+    # one-time look-ahead limited to the warmup block; at and after D0 banding
+    # is purely causal.
+    for category in ("seedsigner", "tools", "other"):
+        cat_days = sorted(day for (day, cat) in by_dc if cat == category)
+        if not cat_days:
+            continue
+        # Per-dimension value sequence aligned to cat_days (chronological).
+        seq = {dim: [by_dc[(d, category)][dim] for d in cat_days] for dim in dim_keys}
 
-        # Overall-tier composition differs by category. SeedSigner keeps the
-        # personal/bot split — manual fork pushes vs autonomous bot work get
-        # weighted differently. Tools and Other don't have personal-fork
-        # commits in practice, so the split adds a perpetually-empty
-        # dimension; instead they ride on the merged n_commits tier.
-        if category == "seedsigner":
-            per_dim_tiers = (
-                tier_commits_personal, tier_commits_bot,
-                tier_committed_files, tier_committed_loc_effort,
-                tier_uncommitted_files, tier_uncommitted_loc_effort,
-                tier_lens_review, tier_lens_discussion, tier_telegram_msgs,
-            )
-        else:
-            per_dim_tiers = (
-                tier_commits,
-                tier_committed_files, tier_committed_loc_effort,
-                tier_uncommitted_files, tier_uncommitted_loc_effort,
-                tier_lens_review, tier_lens_discussion, tier_telegram_msgs,
-            )
-        overall_tier = max(per_dim_tiers, key=lambda t: TIER_RANK[t])
-        # New-repo floor: any (day, category) where a project's earliest
-        # commit / file_touch landed reads at least "moderate".
-        if (day, category) in new_repo_day_cats and TIER_RANK[overall_tier] < TIER_RANK["moderate"]:
-            overall_tier = "moderate"
+        # Index at which each dimension first reaches its banding threshold.
+        # If it never does, default to the last index so it rides the fallback
+        # for its whole life (same as the pre-causal behavior for that dim).
+        warmup_end = {}
+        for dim in dim_keys:
+            threshold = _bander_min_nonzero(dim, min_nonzero_days)
+            seen = 0
+            warmup_end[dim] = len(cat_days) - 1
+            for i, value in enumerate(seq[dim]):
+                if value > 0:
+                    seen += 1
+                    if seen >= threshold:
+                        warmup_end[dim] = i
+                        break
 
-        conn.execute(
-            """
-            INSERT INTO daily_tiers(
-                day, category,
-                n_commits, n_commits_personal, n_commits_bot,
-                n_committed_files, n_committed_loc_effort,
-                n_uncommitted_files, n_uncommitted_loc_effort,
-                n_lens_review, n_lens_discussion, n_telegram_msgs,
-                tier_commits, tier_commits_personal, tier_commits_bot,
-                tier_committed_files, tier_committed_loc_effort,
-                tier_uncommitted_files, tier_uncommitted_loc_effort,
-                tier_lens_review, tier_lens_discussion, tier_telegram_msgs,
-                overall_tier
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                day, category,
-                bucket["n_commits"], bucket["n_commits_personal"], bucket["n_commits_bot"],
-                bucket["n_committed_files"], bucket["n_committed_loc_effort"],
-                bucket["n_uncommitted_files"], bucket["n_uncommitted_loc_effort"],
-                bucket["n_lens_review"], bucket["n_lens_discussion"],
-                bucket["n_telegram_msgs"],
-                tier_commits, tier_commits_personal, tier_commits_bot,
-                tier_committed_files, tier_committed_loc_effort,
-                tier_uncommitted_files, tier_uncommitted_loc_effort,
-                tier_lens_review, tier_lens_discussion, tier_telegram_msgs,
-                overall_tier,
-            ),
-        )
+        for i, day in enumerate(cat_days):
+            bucket = by_dc[(day, category)]
+            tiers = {}
+            for dim in dim_keys:
+                window_end = max(i, warmup_end[dim])
+                bander = _bander_for(
+                    category, dim, seq[dim][: window_end + 1], min_nonzero_days
+                )
+                tiers[dim] = bander(seq[dim][i])
+            # Post-banding adjustments. DIMENSION_DISCOUNTS subtracts levels from
+            # a dimension's tier (telegram has its own custom bander now, so it's
+            # not currently in here). The fork-day boost was removed once
+            # n_commits moved to a 2-band Q3 split — Q3 already differentiates
+            # fork-heavy days from light days without an extra promotion step.
+            tiers["n_telegram_msgs"] = _apply_discount(
+                tiers["n_telegram_msgs"], "n_telegram_msgs"
+            )
+
+            # Overall-tier composition differs by category. SeedSigner keeps the
+            # personal/bot split — manual fork pushes vs autonomous bot work get
+            # weighted differently. Tools and Other don't have personal-fork
+            # commits in practice, so the split adds a perpetually-empty
+            # dimension; instead they ride on the merged n_commits tier.
+            if category == "seedsigner":
+                per_dim_tiers = (
+                    tiers["n_commits_personal"], tiers["n_commits_bot"],
+                    tiers["n_committed_files"], tiers["n_committed_loc_effort"],
+                    tiers["n_uncommitted_files"], tiers["n_uncommitted_loc_effort"],
+                    tiers["n_lens_review"], tiers["n_lens_discussion"],
+                    tiers["n_telegram_msgs"],
+                )
+            else:
+                per_dim_tiers = (
+                    tiers["n_commits"],
+                    tiers["n_committed_files"], tiers["n_committed_loc_effort"],
+                    tiers["n_uncommitted_files"], tiers["n_uncommitted_loc_effort"],
+                    tiers["n_lens_review"], tiers["n_lens_discussion"],
+                    tiers["n_telegram_msgs"],
+                )
+            overall_tier = max(per_dim_tiers, key=lambda t: TIER_RANK[t])
+            # Onset bump: a repo's earliest activity day reads 'high'.
+            if (day, category) in new_repo_day_cats and (
+                TIER_RANK[overall_tier] < TIER_RANK["high"]
+            ):
+                overall_tier = "high"
+
+            conn.execute(
+                """
+                INSERT INTO daily_tiers(
+                    day, category,
+                    n_commits, n_commits_personal, n_commits_bot,
+                    n_committed_files, n_committed_loc_effort,
+                    n_uncommitted_files, n_uncommitted_loc_effort,
+                    n_lens_review, n_lens_discussion, n_telegram_msgs,
+                    tier_commits, tier_commits_personal, tier_commits_bot,
+                    tier_committed_files, tier_committed_loc_effort,
+                    tier_uncommitted_files, tier_uncommitted_loc_effort,
+                    tier_lens_review, tier_lens_discussion, tier_telegram_msgs,
+                    overall_tier
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    day, category,
+                    bucket["n_commits"], bucket["n_commits_personal"],
+                    bucket["n_commits_bot"],
+                    bucket["n_committed_files"], bucket["n_committed_loc_effort"],
+                    bucket["n_uncommitted_files"], bucket["n_uncommitted_loc_effort"],
+                    bucket["n_lens_review"], bucket["n_lens_discussion"],
+                    bucket["n_telegram_msgs"],
+                    tiers["n_commits"], tiers["n_commits_personal"],
+                    tiers["n_commits_bot"],
+                    tiers["n_committed_files"], tiers["n_committed_loc_effort"],
+                    tiers["n_uncommitted_files"], tiers["n_uncommitted_loc_effort"],
+                    tiers["n_lens_review"], tiers["n_lens_discussion"],
+                    tiers["n_telegram_msgs"],
+                    overall_tier,
+                ),
+            )

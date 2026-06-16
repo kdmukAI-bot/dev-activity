@@ -37,6 +37,37 @@ The day's overall tier is the **max** across all nine dimensions (none < trace
 `trace` is a sub-low band only emitted by D8 telegram, so it's effectively
 "chatter without code work."
 
+## Banding window
+
+Tiers are assigned **causally**. `recompute_daily_tiers` replays history per
+category in chronological order and bands each day against the distribution of
+days **up to and including itself** — never the full history. So a day's tier
+reflects how it compared to everything known *at that point in time* and is
+**never degraded** by later, higher-volume days (e.g. the 2026 bot era). The
+`daily_tiers` table is still fully rebuilt every scan because recent days' raw
+counts keep settling inside the scan window, but a settled day has a fixed
+window and therefore a stable, locked-in tier (the rebuild is idempotent for
+those days).
+
+Two adjustments keep this fair at the edges:
+
+- **Warmup protection.** A dimension can't make real distinctions until it has
+  accumulated enough non-zero days to leave its bander's cold-start fallback
+  (the `_bander_min_nonzero` thresholds — 7 for the standard 4-band, 4 for
+  personal-commit Q3, 3 for lens/telegram). Rather than pin a young
+  category/dimension's earliest days to the flat fallback, those warmup days
+  are scored with the **first window that reaches the threshold**: day *D* uses
+  days `<= max(D, D0)`, where `D0` is the day the dimension first matures. This
+  is a bounded one-time look-ahead limited to the warmup block; at and after
+  `D0`, banding is purely causal.
+- **Onset bump.** A repo's earliest activity day is floored to `high` —
+  starting a brand-new effort is itself significant. It fires only on days with
+  real measured activity (no synthetic empty-day cells), which is exactly the
+  set of repos you *started* (committed on day one). Repos you merely *joined* —
+  where `earliest_commit_date` is an upstream author's commit on a day you did
+  nothing (e.g. SeedSigner 2020, embit 2020) — have no bucket that day and so
+  produce no spurious `high` cell.
+
 ## Custom file/data filtering
 
 `local_trees.py` excludes machine-generated artifacts from the file/LoC counts:
@@ -167,10 +198,13 @@ pd-dev-activity-scan
 
 ## Caveats
 
-- **Tier ratings shift as the historical distribution grows.** A day rated
-  `high` in your first month may drop to `moderate` once the distribution
-  thickens. The day-detail panel always shows raw counts behind the tier so
-  the underlying data is visible regardless of drift.
+- **Tiers are locked-in causally, not rescaled.** Each day is banded against
+  the per-category distribution of days *up to and including itself*, so a day
+  rated `high` in a sparse early month keeps that rating even after later
+  high-volume days thicken the distribution — future activity never degrades a
+  past day. (See "Banding window" above.) Tiers for recent days can still move
+  while their raw counts settle inside the scan window, but a settled day is
+  stable. The day-detail panel always shows the raw counts behind the tier.
 - **Strict commit rule** relies on working-tree mtime: a commit whose every
   file has been edited again later (so mtime no longer matches the commit
   date) shows `active_on_commit_day=0`. Day-detail labels these as "older
