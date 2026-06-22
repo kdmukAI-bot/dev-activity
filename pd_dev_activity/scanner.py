@@ -77,6 +77,7 @@ def run_scan(config: dict, db_path: Path | None = None) -> dict:
     stats = {
         "started_at": started_at.isoformat(),
         "local_repos_scanned": 0,
+        "local_trees_pruned": 0,
         "personal_forks_scanned": 0,
         "lens_events_emitted": 0,
         "telegram_rows_upserted": 0,
@@ -163,6 +164,15 @@ def run_scan(config: dict, db_path: Path | None = None) -> dict:
             )
         except Exception:
             logger.exception("telegram scan failed")
+
+        # 5c: reap local trees whose working directory vanished since a prior
+        # scan (deleted or de-initialized). discover_repos only adds/refreshes
+        # repos it can still see, so without this their stale projects/commits/
+        # file_touches would feed recompute forever. Must run before recompute.
+        pruned = storage.prune_missing_local_trees(conn)
+        stats["local_trees_pruned"] = len(pruned)
+        for pid, path in pruned:
+            logger.info("pruned vanished local tree: %s (project_id=%s)", path, pid)
 
         # 6: recompute daily_tiers
         storage.recompute_daily_tiers(

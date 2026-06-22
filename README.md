@@ -228,6 +228,15 @@ pd-dev-activity-scan
   auto-generated empty wrapper around an inline `pr_review_comment` (the user
   doesn't use GitHub's "Submit Review" feature). They were double-counting the
   same activity.
+- **Deleted/moved working trees are reaped.** `discover_repos` only ever adds
+  or refreshes repos it can still walk to, so a local working tree that's been
+  deleted (or relocated, or had its `.git` removed) would otherwise leave its
+  `projects`/`commits`/`file_touches` rows behind to feed `recompute` forever.
+  Each scan calls `prune_missing_local_trees`, which drops any `local_tree`
+  project whose `<path>/.git` is gone (same "is this a repo?" test discovery
+  uses) and cascades to its commits and file_touches. Scoped to `local_tree`
+  only — personal-fork projects store a *bare* clone path (no nested `.git`)
+  and are governed by the `personal_forks` config list, not disk presence.
 - Personal-fork bare clones use unauthenticated HTTPS — fine for public repos
   only. Switch to SSH URLs if any forks are private.
 - Repo categorization (SeedSigner / other) is by basename — a single repo

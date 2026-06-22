@@ -301,6 +301,49 @@ def upsert_project(
     return int(row["id"])
 
 
+def prune_missing_local_trees(
+    conn: sqlite3.Connection,
+) -> list[tuple[int, str]]:
+    """Delete local_tree projects whose working tree no longer exists on disk.
+
+    The scanner only ever *adds* and *refreshes* repos: `discover_repos` walks
+    the scan_roots, so a directory that's been deleted (or de-initialized) is
+    simply never visited again — but its `projects` row plus all of its
+    `commits` and `file_touches` linger forever and keep feeding
+    `recompute_daily_tiers`, so the deleted repo's activity stays on the
+    heatmap indefinitely. This reaps those orphans.
+
+    A project counts as gone when `<path>/.git` is absent — the SAME "is this a
+    repo?" test `discover_repos` uses. That covers both a fully-removed
+    directory and one whose `.git` was deleted (no longer discoverable, so its
+    data is stale either way).
+
+    Scoped to `source='local_tree'` on purpose. Personal-fork projects store a
+    *bare* clone path in the forks cache (no nested `.git`, so this test would
+    false-positive on every one of them), and their lifecycle is governed by
+    the `personal_forks` config list, not by working-tree presence.
+
+    Cascades to commits and file_touches so no orphaned child rows survive.
+    Returns the pruned (id, path) pairs for logging. Callers must run
+    `recompute_daily_tiers` afterward for daily_tiers to reflect the removal.
+    """
+    pruned: list[tuple[int, str]] = []
+    rows = conn.execute(
+        "SELECT id, path FROM projects WHERE source = 'local_tree'"
+    ).fetchall()
+    for row in rows:
+        path = row["path"]
+        if not (Path(path) / ".git").exists():
+            pruned.append((int(row["id"]), path))
+
+    for pid, _path in pruned:
+        # Delete children before the parent — foreign_keys=ON is set on connect.
+        conn.execute("DELETE FROM file_touches WHERE project_id = ?", (pid,))
+        conn.execute("DELETE FROM commits WHERE project_id = ?", (pid,))
+        conn.execute("DELETE FROM projects WHERE id = ?", (pid,))
+    return pruned
+
+
 # --- commits ---------------------------------------------------------------
 
 def upsert_commit(
