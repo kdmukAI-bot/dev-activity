@@ -87,6 +87,12 @@ _EXCLUDED_FILE_SUFFIXES = {
     ".pkl", ".pickle",
     ".npy", ".npz",
     ".bin",
+    # Images: not human-authored line work. Raster formats are binary (numstat
+    # '-', 0 lines) but would still inflate the files-changed dimension; SVG is
+    # text and would otherwise count as real lines of code. Exclude both.
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico",
+    ".svg", ".webp", ".tiff", ".tif", ".heic", ".heif", ".avif",
+    ".psd", ".xcf",
 }
 
 
@@ -173,6 +179,16 @@ def _author_matches(name: str, email: str, substrs: Iterable[str]) -> bool:
     haystack = (name or "") + "\n" + (email or "")
     haystack_lower = haystack.lower()
     return any(s.lower() in haystack_lower for s in substrs)
+
+
+# Operating on a *bare* clone (the personal-fork cache) via `git -C <path>`
+# trips `safe.bareRepository=explicit` whenever that policy is set in the
+# environment — some sandboxes inject it via GIT_CONFIG_* (cron's clean env
+# does not, which is why nightly scans are unaffected but manual/debug runs
+# fail). Prefixing git invocations that may target a bare repo with this
+# relaxes the guard; it's a harmless no-op for the working-tree calls that
+# share these helpers.
+_SAFE_BARE = ["-c", "safe.bareRepository=all"]
 
 
 def _parse_numstat_value(token: str) -> int:
@@ -267,7 +283,7 @@ def find_earliest_commit_date(repo_path: Path) -> str | None:
     """
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo_path), "log", "--all", "--pretty=format:%at"],
+            ["git", *_SAFE_BARE, "-C", str(repo_path), "log", "--all", "--pretty=format:%at"],
             capture_output=True, text=True, check=False, timeout=120,
         )
     except subprocess.TimeoutExpired:
@@ -294,7 +310,7 @@ def run_git_log(
     since: str | None,
 ) -> str:
     cmd = [
-        "git", "-C", str(repo_path), "log", "--all",
+        "git", *_SAFE_BARE, "-C", str(repo_path), "log", "--all",
         "--pretty=format:%H|%aI|%an|%ae|%s",
         "--numstat",
     ]

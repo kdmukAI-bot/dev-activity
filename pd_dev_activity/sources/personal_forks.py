@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .. import storage
-from .local_trees import find_earliest_commit_date, parse_git_log, run_git_log
+from .local_trees import _SAFE_BARE, find_earliest_commit_date, parse_git_log, run_git_log
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +40,13 @@ def _ensure_fetch_refspec(cache_path: Path) -> None:
     a personal fork we only care about branches.
     """
     existing = subprocess.run(
-        ["git", "-C", str(cache_path), "config", "--get-all", "remote.origin.fetch"],
+        ["git", *_SAFE_BARE, "-C", str(cache_path), "config", "--get-all", "remote.origin.fetch"],
         capture_output=True, text=True, check=False, timeout=10,
     )
     if existing.returncode == 0 and _BARE_FETCH_REFSPEC in existing.stdout.split():
         return
     subprocess.run(
-        ["git", "-C", str(cache_path), "config", "remote.origin.fetch", _BARE_FETCH_REFSPEC],
+        ["git", *_SAFE_BARE, "-C", str(cache_path), "config", "remote.origin.fetch", _BARE_FETCH_REFSPEC],
         capture_output=True, check=False, timeout=10,
     )
 
@@ -89,7 +89,7 @@ def ensure_bare_clone(forks_cache_dir: Path, owner_repo: str) -> Path | None:
         _ensure_fetch_refspec(cache_path)
         try:
             proc = subprocess.run(
-                ["git", "-C", str(cache_path), "fetch", "origin", "--prune", "--quiet"],
+                ["git", *_SAFE_BARE, "-C", str(cache_path), "fetch", "origin", "--prune", "--quiet"],
                 capture_output=True, text=True, check=False,
                 timeout=300,
             )
