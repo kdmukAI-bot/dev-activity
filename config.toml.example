@@ -30,12 +30,14 @@ github_logins = ["kdmukai"]
 
 # Repo basenames classified as SeedSigner work. Anything else is "other".
 seedsigner_repos = [
+  "bitcoin-regtest",
   "seedsigner",
   "seedsigner-lvgl-screens",
   "seedsigner-micropython-builder",
   "seedsigner-raspi-lvgl",
   "esp-board-common",
   "esp-camera-pipeline",
+  "esp-secp256k1",
   "embit",
   "project-lens",
   "project-lens-seedsigner-config",
